@@ -1,14 +1,12 @@
 """
-Company-specific job scrapers.
+ATS JSON API scrapers — no HTML parsing.
 
-Strategy per company:
-  - Amazon:   Direct JSON API (/en/search.json) — no browser needed.
-  - Microsoft: Hidden PCSX REST API (/api/pcsx/search) used by apply.careers.microsoft.com.
-  - Google:   Embedded AF_initDataCallback JSON in server-rendered HTML.
-  - Apple:    Server-rendered HTML parsed with BeautifulSoup (API endpoint deprecated).
-
-JobSpy is not used here because it targets job boards (LinkedIn, Indeed, etc.),
-not direct company career pages.
+Supported ATS types (set ``scraper`` in config.json):
+  - greenhouse  → boards-api.greenhouse.io
+  - ashby       → api.ashbyhq.com/posting-api
+  - workday     → *.myworkdayjobs.com/wday/cxs (CXS API)
+  - amazon      → amazon.jobs/en/search.json
+  - microsoft   → apply.careers.microsoft.com/api/pcsx/search
 """
 
 from __future__ import annotations
@@ -21,9 +19,9 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Optional
+from urllib.parse import urljoin
 
 import requests
-from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +30,6 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3.1 Safari/605.1.15",
 ]
 
 
@@ -49,36 +46,201 @@ class JobListing:
 
 class BaseScraper(ABC):
     def __init__(self, company_config: dict, scrape_settings: dict) -> None:
+        self.config = company_config
         self.company_name = company_config["name"]
-        self.base_url = company_config.get("base_url", "")
         self.careers_url = company_config.get("careers_url", "")
         self.max_pages = scrape_settings.get("max_pages_per_company", 5)
         self.page_size = scrape_settings.get("results_per_page", 20)
         self.delay_min = scrape_settings.get("delay_min_seconds", 2)
         self.delay_max = scrape_settings.get("delay_max_seconds", 6)
         self.timeout = scrape_settings.get("request_timeout_seconds", 30)
+        self.fetch_descriptions = scrape_settings.get("fetch_descriptions", True)
         self.session = requests.Session()
 
     def _random_delay(self) -> None:
-        delay = random.uniform(self.delay_min, self.delay_max)
-        logger.debug("[%s] Sleeping %.1fs", self.company_name, delay)
-        time.sleep(delay)
+        time.sleep(random.uniform(self.delay_min, self.delay_max))
 
-    def _get_headers(self) -> dict[str, str]:
-        return {
+    def _headers(self, accept: str = "application/json") -> dict[str, str]:
+        headers = {
             "User-Agent": random.choice(USER_AGENTS),
-            "Accept": "text/html,application/json,application/xhtml+xml,*/*;q=0.8",
+            "Accept": accept,
             "Accept-Language": "en-US,en;q=0.9",
         }
+        if self.careers_url:
+            headers["Referer"] = self.careers_url
+        return headers
 
     @abstractmethod
     def scrape(self) -> list[JobListing]:
         pass
 
 
-class AmazonScraper(BaseScraper):
-    """Scrapes amazon.jobs via the internal search.json XHR endpoint."""
+class GreenhouseScraper(BaseScraper):
+    """GET https://boards-api.greenhouse.io/v1/boards/{board_slug}/jobs?content=true"""
 
+    def scrape(self) -> list[JobListing]:
+        board_slug = self.config["board_slug"]
+        url = f"https://boards-api.greenhouse.io/v1/boards/{board_slug}/jobs"
+        jobs: list[JobListing] = []
+
+        try:
+            self._random_delay()
+            response = self.session.get(
+                url,
+                params={"content": "true"},
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            raw_jobs = response.json().get("jobs", [])
+        except (requests.RequestException, json.JSONDecodeError) as exc:
+            logger.error("[%s] Greenhouse API failed: %s", self.company_name, exc)
+            return []
+
+        for item in raw_jobs:
+            location = item.get("location", {}) or {}
+            loc_name = location.get("name", "") if isinstance(location, dict) else str(location)
+            content = item.get("content", "") or ""
+            jobs.append(
+                JobListing(
+                    company=self.company_name,
+                    job_id=str(item.get("id", "")),
+                    title=(item.get("title") or "").strip(),
+                    location=loc_name,
+                    url=item.get("absolute_url", ""),
+                    description=_strip_html(content),
+                )
+            )
+
+        logger.info("[%s] Greenhouse: scraped %d jobs", self.company_name, len(jobs))
+        return jobs
+
+
+class AshbyScraper(BaseScraper):
+    """GET https://api.ashbyhq.com/posting-api/job-board/{board_slug}"""
+
+    def scrape(self) -> list[JobListing]:
+        board_slug = self.config["board_slug"]
+        url = f"https://api.ashbyhq.com/posting-api/job-board/{board_slug}"
+        jobs: list[JobListing] = []
+
+        try:
+            self._random_delay()
+            response = self.session.get(url, headers=self._headers(), timeout=self.timeout)
+            response.raise_for_status()
+            raw_jobs = response.json().get("jobs", [])
+        except (requests.RequestException, json.JSONDecodeError) as exc:
+            logger.error("[%s] Ashby API failed: %s", self.company_name, exc)
+            return []
+
+        for item in raw_jobs:
+            if item.get("isListed") is False:
+                continue
+            jobs.append(
+                JobListing(
+                    company=self.company_name,
+                    job_id=str(item.get("id", "")),
+                    title=(item.get("title") or "").strip(),
+                    location=(item.get("location") or "").strip(),
+                    url=item.get("jobUrl") or item.get("applyUrl", ""),
+                    description=item.get("descriptionPlain") or _strip_html(item.get("descriptionHtml", "")),
+                )
+            )
+
+        logger.info("[%s] Ashby: scraped %d jobs", self.company_name, len(jobs))
+        return jobs
+
+
+class WorkdayScraper(BaseScraper):
+    """
+    POST https://{tenant}.{wd_server}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs
+    Fetches job detail for description when fetch_descriptions is enabled.
+    """
+
+    WORKDAY_PAGE_SIZE = 20
+
+    def scrape(self) -> list[JobListing]:
+        tenant = self.config["tenant"]
+        wd_server = self.config.get("wd_server", "wd3")
+        site = self.config["site"]
+        base = f"https://{tenant}.{wd_server}.myworkdayjobs.com"
+        list_url = f"{base}/wday/cxs/{tenant}/{site}/jobs"
+        referer = f"{base}/en-US/{site}"
+
+        jobs: list[JobListing] = []
+        offset = 0
+
+        for page in range(self.max_pages):
+            try:
+                self._random_delay()
+                response = self.session.post(
+                    list_url,
+                    json={
+                        "appliedFacets": {},
+                        "limit": self.WORKDAY_PAGE_SIZE,
+                        "offset": offset,
+                        "searchText": "",
+                    },
+                    headers={**self._headers(), "Content-Type": "application/json", "Referer": referer},
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                data = response.json()
+            except (requests.RequestException, json.JSONDecodeError) as exc:
+                logger.error("[%s] Workday page %d failed: %s", self.company_name, page + 1, exc)
+                break
+
+            postings = data.get("jobPostings", [])
+            if not postings:
+                break
+
+            for post in postings:
+                external_path = post.get("externalPath", "")
+                url = urljoin(f"{base}/en-US/{site}/", external_path.lstrip("/"))
+                description = ""
+
+                if self.fetch_descriptions and external_path:
+                    description = self._fetch_description(base, tenant, site, external_path, referer)
+
+                jobs.append(
+                    JobListing(
+                        company=self.company_name,
+                        job_id=external_path.split("/")[-1] if external_path else post.get("title", ""),
+                        title=(post.get("title") or "").strip(),
+                        location=(post.get("locationsText") or "").strip(),
+                        url=url,
+                        description=description,
+                    )
+                )
+
+            offset += self.WORKDAY_PAGE_SIZE
+            total = data.get("total", 0)
+            if offset >= total:
+                break
+
+        logger.info("[%s] Workday: scraped %d jobs", self.company_name, len(jobs))
+        return jobs
+
+    def _fetch_description(
+        self, base: str, tenant: str, site: str, external_path: str, referer: str
+    ) -> str:
+        detail_url = f"{base}/wday/cxs/{tenant}/{site}/job/{external_path.lstrip('/')}"
+        try:
+            self._random_delay()
+            response = self.session.get(
+                detail_url,
+                headers={**self._headers(), "Referer": referer},
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            info = response.json().get("jobPostingInfo", {})
+            return _strip_html(info.get("jobDescription", ""))
+        except (requests.RequestException, json.JSONDecodeError, AttributeError) as exc:
+            logger.debug("[%s] Workday detail fetch failed for %s: %s", self.company_name, external_path, exc)
+            return ""
+
+
+class AmazonScraper(BaseScraper):
     API_URL = "https://www.amazon.jobs/en/search.json"
 
     def scrape(self) -> list[JobListing]:
@@ -90,23 +252,14 @@ class AmazonScraper(BaseScraper):
                 self._random_delay()
                 response = self.session.get(
                     self.API_URL,
-                    params={
-                        "base_query": "",
-                        "result_limit": self.page_size,
-                        "offset": offset,
-                        "sort": "recent",
-                    },
-                    headers={
-                        **self._get_headers(),
-                        "X-Requested-With": "XMLHttpRequest",
-                        "Referer": self.careers_url,
-                    },
+                    params={"base_query": "", "result_limit": self.page_size, "offset": offset, "sort": "recent"},
+                    headers={**self._headers(), "X-Requested-With": "XMLHttpRequest"},
                     timeout=self.timeout,
                 )
                 response.raise_for_status()
                 data = response.json()
             except (requests.RequestException, json.JSONDecodeError) as exc:
-                logger.error("[%s] Page %d failed: %s", self.company_name, page + 1, exc)
+                logger.error("[%s] Amazon page %d failed: %s", self.company_name, page + 1, exc)
                 break
 
             batch = data.get("jobs", [])
@@ -116,14 +269,12 @@ class AmazonScraper(BaseScraper):
             for item in batch:
                 job_path = item.get("job_path", "")
                 url = f"https://www.amazon.jobs{job_path}" if job_path.startswith("/") else job_path
-                location_parts = [
-                    p for p in [item.get("city"), item.get("state"), item.get("country_code")] if p
-                ]
+                location_parts = [p for p in [item.get("city"), item.get("state"), item.get("country_code")] if p]
                 jobs.append(
                     JobListing(
                         company=self.company_name,
                         job_id=str(item.get("id_icims") or item.get("id", "")),
-                        title=item.get("title", "").strip(),
+                        title=(item.get("title") or "").strip(),
                         location=", ".join(location_parts),
                         url=url,
                         description=item.get("description", "") or item.get("description_short", ""),
@@ -134,13 +285,11 @@ class AmazonScraper(BaseScraper):
             if offset >= data.get("hits", 0):
                 break
 
-        logger.info("[%s] Scraped %d jobs", self.company_name, len(jobs))
+        logger.info("[%s] Amazon: scraped %d jobs", self.company_name, len(jobs))
         return jobs
 
 
 class MicrosoftScraper(BaseScraper):
-    """Scrapes apply.careers.microsoft.com via the PCSX search API."""
-
     API_URL = "https://apply.careers.microsoft.com/api/pcsx/search"
 
     def scrape(self) -> list[JobListing]:
@@ -152,22 +301,14 @@ class MicrosoftScraper(BaseScraper):
                 self._random_delay()
                 response = self.session.get(
                     self.API_URL,
-                    params={
-                        "domain": "microsoft.com",
-                        "start": start,
-                        "count": self.page_size,
-                    },
-                    headers={
-                        **self._get_headers(),
-                        "Accept": "application/json",
-                        "Referer": self.careers_url,
-                    },
+                    params={"domain": "microsoft.com", "start": start, "count": self.page_size},
+                    headers=self._headers(),
                     timeout=self.timeout,
                 )
                 response.raise_for_status()
                 data = response.json()
             except (requests.RequestException, json.JSONDecodeError, KeyError) as exc:
-                logger.error("[%s] Page %d failed: %s", self.company_name, page + 1, exc)
+                logger.error("[%s] Microsoft page %d failed: %s", self.company_name, page + 1, exc)
                 break
 
             positions = data.get("data", {}).get("positions", [])
@@ -186,7 +327,7 @@ class MicrosoftScraper(BaseScraper):
                     JobListing(
                         company=self.company_name,
                         job_id=str(pos.get("displayJobId") or pos.get("id", "")),
-                        title=pos.get("name", "").strip(),
+                        title=(pos.get("name") or "").strip(),
                         location="; ".join(locations) if isinstance(locations, list) else str(locations),
                         url=url,
                         description=pos.get("department", ""),
@@ -194,224 +335,33 @@ class MicrosoftScraper(BaseScraper):
                 )
 
             start += self.page_size
-            total = data.get("data", {}).get("count", 0)
-            if start >= total:
+            if start >= data.get("data", {}).get("count", 0):
                 break
 
-        logger.info("[%s] Scraped %d jobs", self.company_name, len(jobs))
+        logger.info("[%s] Microsoft: scraped %d jobs", self.company_name, len(jobs))
         return jobs
-
-
-class GoogleScraper(BaseScraper):
-    """Parses embedded AF_initDataCallback JSON from Google Careers HTML."""
-
-    def scrape(self) -> list[JobListing]:
-        jobs: list[JobListing] = []
-
-        for page in range(1, self.max_pages + 1):
-            try:
-                self._random_delay()
-                response = self.session.get(
-                    self.careers_url,
-                    params={"q": "", "page": page},
-                    headers=self._get_headers(),
-                    timeout=self.timeout,
-                )
-                response.raise_for_status()
-                batch = self._parse_jobs_from_html(response.text)
-            except requests.RequestException as exc:
-                logger.error("[%s] Page %d failed: %s", self.company_name, page, exc)
-                break
-
-            if not batch:
-                break
-            jobs.extend(batch)
-
-        logger.info("[%s] Scraped %d jobs", self.company_name, len(jobs))
-        return jobs
-
-    def _parse_jobs_from_html(self, html: str) -> list[JobListing]:
-        match = re.search(
-            r"AF_initDataCallback\(\{key:\s*'ds:1'.*?data:(.*?)\s*,\s*sideChannel",
-            html,
-            re.DOTALL,
-        )
-        if not match:
-            logger.warning("[%s] Could not find job data in page HTML", self.company_name)
-            return []
-
-        try:
-            raw_jobs = json.loads(match.group(1))[0]
-        except (json.JSONDecodeError, IndexError) as exc:
-            logger.error("[%s] Failed to parse job JSON: %s", self.company_name, exc)
-            return []
-
-        listings: list[JobListing] = []
-        for entry in raw_jobs:
-            if not isinstance(entry, list) or len(entry) < 3:
-                continue
-
-            job_id = str(entry[0])
-            title = str(entry[1]) if entry[1] else ""
-            url = str(entry[2]) if entry[2] else ""
-
-            if url and "jobId=" in url:
-                job_id_param = re.search(r"jobId=([^&]+)", url)
-                if job_id_param:
-                    url = (
-                        f"https://www.google.com/about/careers/applications/"
-                        f"jobs/results/{job_id_param.group(1)}"
-                    )
-
-            location = self._extract_location(entry)
-            description = self._extract_description(entry)
-
-            listings.append(
-                JobListing(
-                    company=self.company_name,
-                    job_id=job_id,
-                    title=title.strip(),
-                    location=location,
-                    url=url,
-                    description=description,
-                )
-            )
-
-        return listings
-
-    @staticmethod
-    def _extract_location(entry: list[Any]) -> str:
-        if len(entry) > 9 and isinstance(entry[9], list) and entry[9]:
-            first_loc = entry[9][0]
-            if isinstance(first_loc, list) and first_loc:
-                return str(first_loc[0])
-        return ""
-
-    @staticmethod
-    def _extract_description(entry: list[Any]) -> str:
-        parts: list[str] = []
-        for idx in (3, 4, 10, 19):
-            if len(entry) > idx and entry[idx]:
-                val = entry[idx]
-                if isinstance(val, list) and len(val) > 1 and val[1]:
-                    parts.append(str(val[1]))
-                elif isinstance(val, str):
-                    parts.append(val)
-        return " ".join(parts)
-
-
-class AppleScraper(BaseScraper):
-    """Parses server-rendered HTML from jobs.apple.com (20 jobs per page)."""
-
-    def scrape(self) -> list[JobListing]:
-        jobs: list[JobListing] = []
-
-        for page in range(1, self.max_pages + 1):
-            try:
-                self._random_delay()
-                response = self.session.get(
-                    self.careers_url,
-                    params={"page": page},
-                    headers=self._get_headers(),
-                    timeout=self.timeout,
-                )
-                response.raise_for_status()
-                batch = self._parse_jobs_from_html(response.text)
-            except requests.RequestException as exc:
-                logger.error("[%s] Page %d failed: %s", self.company_name, page, exc)
-                break
-
-            if not batch:
-                break
-            jobs.extend(batch)
-
-        logger.info("[%s] Scraped %d jobs", self.company_name, len(jobs))
-        return jobs
-
-    def _parse_jobs_from_html(self, html: str) -> list[JobListing]:
-        soup = BeautifulSoup(html, "lxml")
-        listings: list[JobListing] = []
-
-        for item in soup.select("li.rc-accordion-item"):
-            title_link = item.select_one(".job-title h3 a")
-            if not title_link:
-                continue
-
-            title = title_link.get_text(strip=True)
-            href = title_link.get("href", "")
-            url = f"{self.base_url}{href}" if href.startswith("/") else href
-
-            team_el = item.select_one(".team-name")
-            team = team_el.get_text(strip=True) if team_el else ""
-
-            role_el = item.select_one("[class*='role-number'], [id*='Role-Number']")
-            role_text = item.get_text(" ", strip=True)
-            job_id_match = re.search(r"Role Number:\s*(\d+)", role_text)
-            job_id = job_id_match.group(1) if job_id_match else href.split("/details/")[-1].split("/")[0]
-
-            location = self._extract_location(item)
-            date_posted = self._extract_date(item)
-
-            listings.append(
-                JobListing(
-                    company=self.company_name,
-                    job_id=str(job_id),
-                    title=title,
-                    location=location,
-                    url=url,
-                    description=f"{team}. Posted: {date_posted}".strip(". "),
-                )
-            )
-
-        return listings
-
-    @staticmethod
-    def _extract_location(item: BeautifulSoup) -> str:
-        for el in item.select("span, div"):
-            text = el.get_text(strip=True)
-            if text.startswith("Location") and len(text) > 10:
-                return text.replace("Location", "", 1).strip()
-        loc_match = re.search(r"Location\s+(.+?)(?:Actions|$)", item.get_text(" ", strip=True))
-        return loc_match.group(1).strip() if loc_match else ""
-
-    @staticmethod
-    def _extract_date(item: BeautifulSoup) -> str:
-        date_match = re.search(
-            r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}",
-            item.get_text(" ", strip=True),
-        )
-        return date_match.group(0) if date_match else ""
 
 
 SCRAPER_REGISTRY: dict[str, type[BaseScraper]] = {
+    "greenhouse": GreenhouseScraper,
+    "ashby": AshbyScraper,
+    "workday": WorkdayScraper,
     "amazon": AmazonScraper,
     "microsoft": MicrosoftScraper,
-    "google": GoogleScraper,
-    "apple": AppleScraper,
 }
 
 
-def match_keywords(job: JobListing, keywords: list[str]) -> list[str]:
-    """Return keywords found in job title, location, or description (case-insensitive)."""
-    searchable = " ".join([job.title, job.location, job.description])
-    matched = []
-    for keyword in keywords:
-        if not keyword.strip():
-            continue
-        # Short keywords (e.g. "AI") use word boundaries to avoid matching inside "Retail".
-        if len(keyword) <= 3 and " " not in keyword:
-            pattern = rf"\b{re.escape(keyword)}\b"
-            if re.search(pattern, searchable, re.IGNORECASE):
-                matched.append(keyword)
-        elif keyword.lower() in searchable.lower():
-            matched.append(keyword)
-    return matched
+def _strip_html(html: str) -> str:
+    if not html:
+        return ""
+    text = re.sub(r"<[^>]+>", " ", html)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def get_scraper(company_config: dict, scrape_settings: dict) -> Optional[BaseScraper]:
     scraper_type = company_config.get("scraper", "").lower()
     scraper_cls = SCRAPER_REGISTRY.get(scraper_type)
     if not scraper_cls:
-        logger.error("Unknown scraper type: %s", scraper_type)
+        logger.error("Unknown scraper type '%s' for %s", scraper_type, company_config.get("name"))
         return None
     return scraper_cls(company_config, scrape_settings)

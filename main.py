@@ -1,6 +1,6 @@
 """
-Job Monitor — scrapes FAANG career pages, filters by keywords,
-deduplicates via SQLite, and sends Telegram/Email alerts.
+Job Monitor — scrapes company career pages via ATS JSON APIs,
+filters by candidate profile, deduplicates via SQLite, and alerts via Telegram/Email.
 """
 
 from __future__ import annotations
@@ -13,8 +13,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from database import JobDatabase
+from filters import ProfileFilter
 from notifier import JobAlert, NotificationManager
-from scraper import JobListing, get_scraper, match_keywords
+from scraper import get_scraper
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,7 +36,7 @@ def load_config(path: Path = CONFIG_PATH) -> dict:
 def process_company(
     company_config: dict,
     scrape_settings: dict,
-    keywords: list[str],
+    profile: ProfileFilter,
     db: JobDatabase,
     notifier: NotificationManager,
 ) -> tuple[int, int, int]:
@@ -55,12 +56,12 @@ def process_company(
     alerted = 0
 
     for job in jobs:
-        keywords_found = match_keywords(job, keywords)
-        if not keywords_found:
+        passes, matched_terms = profile.evaluate(job)
+        if not passes:
             continue
 
         matched += 1
-        job.matched_keywords = keywords_found
+        job.matched_keywords = matched_terms
 
         if db.is_seen(job.company, job.job_id):
             continue
@@ -71,7 +72,7 @@ def process_company(
             title=job.title,
             location=job.location,
             url=job.url,
-            matched_keywords=keywords_found,
+            matched_keywords=matched_terms,
         )
 
         notifier.send_alert(
@@ -79,16 +80,16 @@ def process_company(
                 company=job.company,
                 title=job.title,
                 location=job.location,
-                matched_keywords=keywords_found,
+                matched_keywords=matched_terms,
                 url=job.url,
             )
         )
         alerted += 1
         logger.info(
-            "NEW: [%s] %s — keywords: %s",
+            "NEW: [%s] %s — matched: %s",
             job.company,
             job.title,
-            ", ".join(keywords_found),
+            ", ".join(matched_terms),
         )
 
     return len(jobs), matched, alerted
@@ -97,12 +98,10 @@ def process_company(
 def run() -> None:
     load_dotenv()
     config = load_config()
-    keywords = config.get("keywords", [])
+    profile = ProfileFilter.from_config(config)
     scrape_settings = config.get("scrape_settings", {})
     companies = config.get("companies", [])
 
-    if not keywords:
-        logger.warning("No keywords configured in config.json")
     if not companies:
         logger.error("No companies configured in config.json")
         sys.exit(1)
@@ -115,7 +114,14 @@ def run() -> None:
     total_alerted = 0
     errors = 0
 
-    logger.info("Starting job monitor — %d companies, %d keywords", len(companies), len(keywords))
+    enabled = [c for c in companies if c.get("enabled", True)]
+    logger.info(
+        "Starting job monitor — %d companies enabled, profile: %d skills, %d roles, %d exclusions",
+        len(enabled),
+        len(profile.must_include_keywords),
+        len(profile.target_roles),
+        len(profile.exclude_keywords),
+    )
     logger.info("Previously seen jobs in DB: %d", db.count_seen())
 
     for company_config in companies:
@@ -124,17 +130,17 @@ def run() -> None:
             continue
 
         company_name = company_config.get("name", "Unknown")
-        logger.info("--- Scraping %s ---", company_name)
+        logger.info("--- Scraping %s (%s) ---", company_name, company_config.get("scraper", "?"))
 
         try:
             scraped, matched, alerted = process_company(
-                company_config, scrape_settings, keywords, db, notifier
+                company_config, scrape_settings, profile, db, notifier
             )
             total_scraped += scraped
             total_matched += matched
             total_alerted += alerted
             logger.info(
-                "[%s] Done — scraped: %d, keyword matches: %d, new alerts: %d",
+                "[%s] Done — scraped: %d, profile matches: %d, new alerts: %d",
                 company_name,
                 scraped,
                 matched,

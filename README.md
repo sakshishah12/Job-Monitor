@@ -1,226 +1,201 @@
-# Job Monitor — FAANG Career Page Scraper
+# Job Monitor — ATS JSON API Scraper
 
-Monitors career pages for **Microsoft, Apple, Google, and Amazon**, filters jobs by your keywords, deduplicates via SQLite, and sends real-time alerts via **Telegram** and/or **Email**.
+Monitors career pages at top tech/AI companies via **hidden JSON APIs** (Greenhouse, Ashby, Workday, etc.), filters jobs against your **candidate profile**, deduplicates with SQLite, and sends **Telegram/Email** alerts.
 
-Runs locally or on a free **GitHub Actions** cron schedule (every 6 hours).
+Runs locally or on a free **GitHub Actions** cron (every 6 hours).
 
 ## Folder Structure
 
 ```
 scrap-jobs/
-├── .github/
-│   └── workflows/
-│       └── job_scraper.yml    # GitHub Actions cron workflow
-├── .env.example               # Environment variable template
-├── .gitignore
-├── config.json                # Keywords, companies, scrape settings
-├── database.py                # SQLite duplicate prevention
-├── main.py                    # Entry point
-├── notifier.py                # Telegram + Email alerts
+├── .github/workflows/job_scraper.yml
+├── config.json              # Profile filter + company list (ATS config)
+├── filters.py               # Profile-based include/exclude logic
+├── scraper.py               # Greenhouse / Ashby / Workday / Amazon / Microsoft
+├── database.py              # SQLite duplicate prevention
+├── notifier.py              # Telegram + Email alerts
+├── main.py                  # Entry point
 ├── requirements.txt
-├── scraper.py                 # Company-specific scrapers
-├── data/
-│   └── seen_jobs.db           # Auto-created SQLite database
-└── README.md
+└── data/seen_jobs.db        # Auto-created
 ```
 
-## Scraping Strategy
+## Scraping Strategy (JSON APIs only — no HTML parsing)
 
-| Company   | Method | Why |
-|-----------|--------|-----|
-| Amazon    | `GET /en/search.json` REST API | Returns full JSON; no browser needed |
-| Microsoft | `GET /api/pcsx/search` PCSX API | Hidden API used by apply.careers.microsoft.com |
-| Google    | Parse `AF_initDataCallback` JSON embedded in HTML | Server-rendered job data in page source |
-| Apple     | BeautifulSoup HTML parsing | Server-rendered listings (20/page); REST API deprecated |
+| ATS | Scraper key | API endpoint | Companies in config |
+|-----|-------------|--------------|---------------------|
+| **Greenhouse** | `greenhouse` | `boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true` | Datadog, Stripe, Anthropic, Glean, Databricks, Scale AI, MongoDB, Cloudflare |
+| **Ashby** | `ashby` | `api.ashbyhq.com/posting-api/job-board/{slug}` | OpenAI, Snowflake, Cohere, Perplexity, Cursor |
+| **Workday** | `workday` | `{tenant}.{wd}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs` | Salesforce |
+| **Custom** | `amazon` / `microsoft` | Internal JSON APIs | Amazon, Microsoft |
 
-**JobSpy** is not used — it targets job boards (LinkedIn, Indeed, etc.), not direct company career pages.
+> **Intuit** is included but disabled — it uses Phenom People with no public JSON API (requires OAuth from Phenom).
 
-**Playwright** is not required — all four companies expose data via HTTP requests.
+## Profile Filtering
 
-## Quick Start (Local)
-
-### 1. Clone and install
-
-```bash
-git clone https://github.com/YOUR_USERNAME/scrap-jobs.git
-cd scrap-jobs
-python -m venv .venv
-
-# Windows
-.venv\Scripts\activate
-
-# macOS/Linux
-source .venv/bin/activate
-
-pip install -r requirements.txt
-```
-
-### 2. Configure keywords and companies
-
-Edit `config.json`:
+Edit `profile_filter` in `config.json`:
 
 ```json
 {
-  "keywords": ["AI", "Machine Learning", "FastAPI", "New Grad", "2026"],
-  "scrape_settings": {
-    "max_pages_per_company": 5,
-    "results_per_page": 20,
-    "delay_min_seconds": 2,
-    "delay_max_seconds": 6
+  "profile_filter": {
+    "must_include_keywords": ["Python", "FastAPI", "Machine Learning", "Backend", "..."],
+    "target_roles": ["New Grad", "Software Engineer", "AI Engineer", "2026", "..."],
+    "exclude_keywords": ["Staff", "Principal", "Director", "Manager", "Senior"]
   }
 }
 ```
 
-- `max_pages_per_company` — pages fetched per company per run (20 jobs/page for most sites)
-- `delay_min/max_seconds` — randomized pause between requests (anti-bot)
+**Logic:**
+1. **Exclude** — if any exclude term appears in the **title**, the job is rejected (word-boundary match).
+2. **Target roles** — at least one role keyword must appear in the title (falls back to full text).
+3. **Must include** — at least one skill keyword must appear in title + description + location.
 
-### 3. Set up notifications
+---
 
+## How to Add a New Company
+
+### Step 1 — Find the ATS type
+
+Open the company's careers page → DevTools → **Network** tab → filter by `Fetch/XHR`. Look for:
+
+| If you see requests to… | ATS type | Config key |
+|-------------------------|----------|------------|
+| `boards-api.greenhouse.io` | Greenhouse | `greenhouse` |
+| `api.ashbyhq.com/posting-api` | Ashby | `ashby` |
+| `*.myworkdayjobs.com/wday/cxs` | Workday | `workday` |
+| `api.smartrecruiters.com` | SmartRecruiters | *(not yet supported — open an issue)* |
+| `api.lever.co` | Lever | *(not yet supported)* |
+
+### Step 2 — Find the board slug / Workday tenant
+
+**Greenhouse:** slug is in the URL or API path:
+```
+https://boards.greenhouse.io/datadog  →  board_slug: "datadog"
+```
+
+**Ashby:** slug is in the API URL:
+```
+https://api.ashbyhq.com/posting-api/job-board/openai  →  board_slug: "openai"
+```
+
+**Workday:** parse from the careers URL:
+```
+https://salesforce.wd12.myworkdayjobs.com/en-US/External_Career_Site
+  → tenant: "salesforce", wd_server: "wd12", site: "External_Career_Site"
+```
+
+**Quick test (Greenhouse):**
 ```bash
-cp .env.example .env
+curl "https://boards-api.greenhouse.io/v1/boards/YOUR_SLUG/jobs?content=true" | head
 ```
 
-Edit `.env`:
+### Step 3 — Add to `config.json`
 
-```env
-ENABLE_TELEGRAM=true
-ENABLE_EMAIL=false
-
-TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
-TELEGRAM_CHAT_ID=987654321
+**Greenhouse example:**
+```json
+{
+  "name": "Figma",
+  "enabled": true,
+  "scraper": "greenhouse",
+  "board_slug": "figma",
+  "careers_url": "https://www.figma.com/careers/"
+}
 ```
 
-#### Telegram setup
-
-1. Open Telegram, search for **@BotFather**
-2. Send `/newbot`, follow prompts, copy the **bot token**
-3. Search for **@userinfobot**, send `/start`, copy your **chat ID**
-4. Send any message to your new bot first (required before it can message you)
-
-#### Gmail setup
-
-1. Enable [2-Step Verification](https://myaccount.google.com/security) on your Google account
-2. Go to [App Passwords](https://myaccount.google.com/apppasswords)
-3. Create an app password for "Mail"
-4. Set in `.env`:
-
-```env
-ENABLE_EMAIL=true
-EMAIL_SENDER=you@gmail.com
-EMAIL_PASSWORD=your_16_char_app_password
-EMAIL_RECIPIENT=you@gmail.com
+**Ashby example:**
+```json
+{
+  "name": "Replit",
+  "enabled": true,
+  "scraper": "ashby",
+  "board_slug": "replit",
+  "careers_url": "https://replit.com/careers"
+}
 ```
 
-### 4. Run locally
+**Workday example:**
+```json
+{
+  "name": "NVIDIA",
+  "enabled": true,
+  "scraper": "workday",
+  "tenant": "nvidia",
+  "wd_server": "wd5",
+  "site": "NVIDIAExternalCareerSite",
+  "careers_url": "https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite"
+}
+```
+
+### Step 4 — Test locally
 
 ```bash
 python main.py
 ```
 
-Expected output:
-
-```
-2026-06-05 10:00:00 [INFO] job_monitor: Starting job monitor — 4 companies, 5 keywords
-2026-06-05 10:00:01 [INFO] scraper: [Amazon] Scraped 100 jobs
-2026-06-05 10:00:05 [INFO] job_monitor: NEW: [Amazon] ML Engineer — keywords: AI, Machine Learning
-...
-```
-
-On first run, matching jobs trigger alerts. Subsequent runs only alert on **new** listings.
+Check logs for `[CompanyName] Done — scraped: X, profile matches: Y`.
 
 ---
 
-## GitHub Actions Deployment (Free)
-
-### 1. Push to GitHub
+## Quick Start (Local)
 
 ```bash
-git init
-git add .
-git commit -m "Add FAANG job monitor"
-git remote add origin https://github.com/YOUR_USERNAME/scrap-jobs.git
-git push -u origin main
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+pip install -r requirements.txt
+cp .env.example .env            # configure Telegram/Email
+python main.py
 ```
 
-### 2. Add repository secrets
+### Telegram setup
+1. Create bot via **@BotFather** → copy token
+2. Get chat ID via **@userinfobot**
+3. Send a message to your bot first
 
-Go to your repo → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**
-
-Add these secrets:
-
-| Secret Name | Required When | Value |
-|-------------|---------------|-------|
-| `ENABLE_TELEGRAM` | Telegram alerts | `true` or `false` |
-| `ENABLE_EMAIL` | Email alerts | `true` or `false` |
-| `TELEGRAM_BOT_TOKEN` | Telegram enabled | Bot token from @BotFather |
-| `TELEGRAM_CHAT_ID` | Telegram enabled | Your chat ID from @userinfobot |
-| `EMAIL_SMTP_HOST` | Email enabled | `smtp.gmail.com` (optional, this is the default) |
-| `EMAIL_SMTP_PORT` | Email enabled | `587` (optional) |
-| `EMAIL_SENDER` | Email enabled | Your Gmail address |
-| `EMAIL_PASSWORD` | Email enabled | Gmail App Password (not your login password) |
-| `EMAIL_RECIPIENT` | Email enabled | Where to send alerts |
-
-> **Security:** Never commit `.env` to git. Secrets are encrypted by GitHub and only exposed to the workflow at runtime.
-
-### 3. Enable the workflow
-
-The workflow at `.github/workflows/job_scraper.yml` runs automatically every 6 hours.
-
-To trigger manually: **Actions** tab → **Job Scraper** → **Run workflow**.
-
-### 4. How duplicate prevention works in CI
-
-- The SQLite database (`data/seen_jobs.db`) is cached between runs via `actions/cache`
-- A backup artifact is uploaded after each run
-- Jobs are keyed by `SHA256(company + job_id)` — you won't get repeat alerts
+### Gmail setup
+1. Enable 2-Step Verification
+2. Create an [App Password](https://myaccount.google.com/apppasswords)
+3. Set `EMAIL_PASSWORD` to the 16-character app password
 
 ---
 
-## Customization
+## GitHub Actions Deployment
 
-### Add more keywords
+Push to GitHub, then add these **repository secrets** (Settings → Secrets → Actions):
 
-```json
-"keywords": ["AI", "LLM", "Python", "Backend", "2026", "Intern"]
-```
+| Secret | Value |
+|--------|-------|
+| `ENABLE_TELEGRAM` | `true` or `false` |
+| `ENABLE_EMAIL` | `true` or `false` |
+| `TELEGRAM_BOT_TOKEN` | Bot token |
+| `TELEGRAM_CHAT_ID` | Your chat ID |
+| `EMAIL_SENDER` | Gmail address |
+| `EMAIL_PASSWORD` | Gmail App Password |
+| `EMAIL_RECIPIENT` | Alert recipient |
 
-Matching is case-insensitive across **title**, **location**, and **description**.
-
-### Disable a company
-
-```json
-{
-  "name": "Apple",
-  "enabled": false,
-  ...
-}
-```
-
-### Change scrape frequency
-
-Edit the cron in `.github/workflows/job_scraper.yml`:
-
-```yaml
-# Every 4 hours
-- cron: "0 */4 * * *"
-
-# Every day at 8 AM UTC
-- cron: "0 8 * * *"
-```
+The workflow runs every 6 hours and caches `data/seen_jobs.db` between runs.
 
 ---
 
-## Troubleshooting
+## Currently Configured Companies
 
-| Issue | Fix |
-|-------|-----|
-| No alerts on first run | Check keywords match actual job titles; try broader terms like "Software" |
-| Telegram "chat not found" | Send a message to your bot first, verify `TELEGRAM_CHAT_ID` |
-| Gmail auth failed | Use an App Password, not your regular Gmail password |
-| Scraper returns 0 jobs | Company may have changed their site; check logs for that company |
-| GitHub Action repeats alerts | Ensure cache step is present; check `data/seen_jobs.db` artifact |
-
----
+| Company | ATS | Status |
+|---------|-----|--------|
+| Salesforce | Workday | enabled |
+| Snowflake | Ashby | enabled |
+| Datadog | Greenhouse | enabled |
+| Stripe | Greenhouse | enabled |
+| Anthropic | Greenhouse | enabled |
+| OpenAI | Ashby | enabled |
+| Glean | Greenhouse | enabled |
+| Databricks | Greenhouse | enabled |
+| Scale AI | Greenhouse | enabled |
+| Cohere | Ashby | enabled |
+| Perplexity | Ashby | enabled |
+| Cursor | Ashby | enabled |
+| MongoDB | Greenhouse | enabled |
+| Cloudflare | Greenhouse | enabled |
+| Microsoft | Custom API | enabled |
+| Amazon | Custom API | enabled |
+| Intuit | Phenom | **disabled** (no public API) |
 
 ## License
 

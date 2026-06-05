@@ -1,46 +1,160 @@
 {
-  "keywords": [
-    "AI",
-    "Machine Learning",
-    "FastAPI",
-    "New Grad",
-    "2026"
-  ],
+  "profile_filter": {
+    "must_include_keywords": [
+      "Python",
+      "FastAPI",
+      "Applied AI",
+      "RAG",
+      "FAISS",
+      "Machine Learning",
+      "NLP",
+      "Backend",
+      "Data Engineering"
+    ],
+    "target_roles": [
+      "New Grad",
+      "Early Career",
+      "University",
+      "2026",
+      "Software Engineer",
+      "AI Engineer",
+      "Backend Engineer"
+    ],
+    "exclude_keywords": [
+      "Staff",
+      "Principal",
+      "Director",
+      "Manager",
+      "Senior"
+    ]
+  },
   "scrape_settings": {
     "max_pages_per_company": 5,
     "results_per_page": 20,
     "delay_min_seconds": 2,
     "delay_max_seconds": 6,
-    "request_timeout_seconds": 30
+    "request_timeout_seconds": 30,
+    "fetch_descriptions": true
   },
   "companies": [
+    {
+      "name": "Salesforce",
+      "enabled": true,
+      "scraper": "workday",
+      "tenant": "salesforce",
+      "wd_server": "wd12",
+      "site": "External_Career_Site",
+      "careers_url": "https://salesforce.wd12.myworkdayjobs.com/en-US/External_Career_Site"
+    },
+    {
+      "name": "Snowflake",
+      "enabled": true,
+      "scraper": "ashby",
+      "board_slug": "snowflake",
+      "careers_url": "https://careers.snowflake.com/us/en/search-results"
+    },
+    {
+      "name": "Datadog",
+      "enabled": true,
+      "scraper": "greenhouse",
+      "board_slug": "datadog",
+      "careers_url": "https://careers.datadoghq.com/"
+    },
+    {
+      "name": "Stripe",
+      "enabled": true,
+      "scraper": "greenhouse",
+      "board_slug": "stripe",
+      "careers_url": "https://stripe.com/jobs/search"
+    },
+    {
+      "name": "Anthropic",
+      "enabled": true,
+      "scraper": "greenhouse",
+      "board_slug": "anthropic",
+      "careers_url": "https://www.anthropic.com/careers"
+    },
+    {
+      "name": "OpenAI",
+      "enabled": true,
+      "scraper": "ashby",
+      "board_slug": "openai",
+      "careers_url": "https://openai.com/careers/search/"
+    },
+    {
+      "name": "Glean",
+      "enabled": true,
+      "scraper": "greenhouse",
+      "board_slug": "gleanwork",
+      "careers_url": "https://www.glean.com/careers"
+    },
+    {
+      "name": "Databricks",
+      "enabled": true,
+      "scraper": "greenhouse",
+      "board_slug": "databricks",
+      "careers_url": "https://www.databricks.com/company/careers/open-positions"
+    },
+    {
+      "name": "Scale AI",
+      "enabled": true,
+      "scraper": "greenhouse",
+      "board_slug": "scaleai",
+      "careers_url": "https://scale.com/careers"
+    },
+    {
+      "name": "Cohere",
+      "enabled": true,
+      "scraper": "ashby",
+      "board_slug": "cohere",
+      "careers_url": "https://cohere.com/careers"
+    },
+    {
+      "name": "Perplexity",
+      "enabled": true,
+      "scraper": "ashby",
+      "board_slug": "perplexity",
+      "careers_url": "https://www.perplexity.ai/hub/careers"
+    },
+    {
+      "name": "Cursor",
+      "enabled": true,
+      "scraper": "ashby",
+      "board_slug": "cursor",
+      "careers_url": "https://cursor.com/careers"
+    },
+    {
+      "name": "MongoDB",
+      "enabled": true,
+      "scraper": "greenhouse",
+      "board_slug": "mongodb",
+      "careers_url": "https://www.mongodb.com/careers"
+    },
+    {
+      "name": "Cloudflare",
+      "enabled": true,
+      "scraper": "greenhouse",
+      "board_slug": "cloudflare",
+      "careers_url": "https://www.cloudflare.com/careers/jobs/"
+    },
     {
       "name": "Microsoft",
       "enabled": true,
       "scraper": "microsoft",
-      "base_url": "https://apply.careers.microsoft.com",
       "careers_url": "https://apply.careers.microsoft.com/careers"
-    },
-    {
-      "name": "Apple",
-      "enabled": true,
-      "scraper": "apple",
-      "base_url": "https://jobs.apple.com",
-      "careers_url": "https://jobs.apple.com/en-us/search"
-    },
-    {
-      "name": "Google",
-      "enabled": true,
-      "scraper": "google",
-      "base_url": "https://www.google.com",
-      "careers_url": "https://www.google.com/about/careers/applications/jobs/results/"
     },
     {
       "name": "Amazon",
       "enabled": true,
       "scraper": "amazon",
-      "base_url": "https://www.amazon.jobs",
       "careers_url": "https://www.amazon.jobs/en/search"
+    },
+    {
+      "name": "Intuit",
+      "enabled": false,
+      "scraper": "phenom",
+      "careers_url": "https://jobs.intuit.com/search-jobs",
+      "_note": "Intuit uses Phenom People with no public JSON API. Requires OAuth token from Phenom. Set enabled:true only after adding a PhenomScraper with credentials."
     }
   ]
 }
