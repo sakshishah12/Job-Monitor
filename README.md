@@ -185,7 +185,7 @@ Push to GitHub, then add these **repository secrets** (Settings → Secrets → 
 | `EMAIL_PASSWORD` | Gmail App Password |
 | `EMAIL_RECIPIENT` | Alert recipient |
 
-The workflow runs every 6 hours and caches `data/seen_jobs.db` between runs.
+The workflow runs every 6 hours and restores the latest cached `data/seen_jobs.db` before scraping, then saves the updated DB under a new cache key for the next run.
 
 ---
 

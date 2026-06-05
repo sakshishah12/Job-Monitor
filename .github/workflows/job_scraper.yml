@@ -31,8 +31,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: data/seen_jobs.db
-          key: seen-jobs-db-${{ github.repository }}
+          key: seen-jobs-db-${{ github.repository }}-${{ github.run_id }}
           restore-keys: |
+            seen-jobs-db-${{ github.repository }}-
+            seen-jobs-db-${{ github.repository }}
             seen-jobs-db-
 
       - name: Run job scraper
