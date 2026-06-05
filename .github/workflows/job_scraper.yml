@@ -1,0 +1,58 @@
+name: Job Scraper
+
+on:
+  schedule:
+    # Every 6 hours (UTC)
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore seen-jobs database cache
+        uses: actions/cache@v4
+        with:
+          path: data/seen_jobs.db
+          key: seen-jobs-db-${{ github.repository }}
+          restore-keys: |
+            seen-jobs-db-
+
+      - name: Run job scraper
+        env:
+          ENABLE_TELEGRAM: ${{ secrets.ENABLE_TELEGRAM }}
+          ENABLE_EMAIL: ${{ secrets.ENABLE_EMAIL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          EMAIL_SMTP_HOST: ${{ secrets.EMAIL_SMTP_HOST }}
+          EMAIL_SMTP_PORT: ${{ secrets.EMAIL_SMTP_PORT }}
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+        run: python main.py
+
+      - name: Upload database artifact (backup)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seen-jobs-db
+          path: data/seen_jobs.db
+          retention-days: 30
+          if-no-files-found: ignore

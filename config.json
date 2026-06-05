@@ -1,0 +1,46 @@
+{
+  "keywords": [
+    "AI",
+    "Machine Learning",
+    "FastAPI",
+    "New Grad",
+    "2026"
+  ],
+  "scrape_settings": {
+    "max_pages_per_company": 5,
+    "results_per_page": 20,
+    "delay_min_seconds": 2,
+    "delay_max_seconds": 6,
+    "request_timeout_seconds": 30
+  },
+  "companies": [
+    {
+      "name": "Microsoft",
+      "enabled": true,
+      "scraper": "microsoft",
+      "base_url": "https://apply.careers.microsoft.com",
+      "careers_url": "https://apply.careers.microsoft.com/careers"
+    },
+    {
+      "name": "Apple",
+      "enabled": true,
+      "scraper": "apple",
+      "base_url": "https://jobs.apple.com",
+      "careers_url": "https://jobs.apple.com/en-us/search"
+    },
+    {
+      "name": "Google",
+      "enabled": true,
+      "scraper": "google",
+      "base_url": "https://www.google.com",
+      "careers_url": "https://www.google.com/about/careers/applications/jobs/results/"
+    },
+    {
+      "name": "Amazon",
+      "enabled": true,
+      "scraper": "amazon",
+      "base_url": "https://www.amazon.jobs",
+      "careers_url": "https://www.amazon.jobs/en/search"
+    }
+  ]
+}
