@@ -8,6 +8,7 @@ import smtplib
 from dataclasses import dataclass
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape
 from typing import Optional
 
 import requests
@@ -99,6 +100,33 @@ class EmailNotifier:
             logger.error("Email notification failed: %s", exc)
             return False
 
+    def send_digest(self, alerts: list[JobAlert], title: str = "Job Matches") -> bool:
+        if not alerts:
+            logger.info("No jobs to include in email digest")
+            return False
+
+        subject = f"[Job Alert] {title} ({len(alerts)} jobs)"
+        plain_body = self._format_digest_plain(alerts, title)
+        html_body = self._format_digest_html(alerts, title)
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = self.sender
+        msg["To"] = self.recipient
+        msg.attach(MIMEText(plain_body, "plain"))
+        msg.attach(MIMEText(html_body, "html"))
+
+        try:
+            with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=30) as server:
+                server.starttls()
+                server.login(self.sender, self.password)
+                server.sendmail(self.sender, [self.recipient], msg.as_string())
+            logger.info("Email digest sent with %d jobs", len(alerts))
+            return True
+        except smtplib.SMTPException as exc:
+            logger.error("Email digest failed: %s", exc)
+            return False
+
     @staticmethod
     def _format_body(alert: JobAlert) -> str:
         keywords = ", ".join(alert.matched_keywords)
@@ -110,6 +138,71 @@ class EmailNotifier:
             f"Matched Keywords: {keywords}\n"
             f"Apply: {alert.url}\n"
         )
+
+    @staticmethod
+    def _format_digest_plain(alerts: list[JobAlert], title: str) -> str:
+        lines = [
+            title,
+            "",
+            f"Found {len(alerts)} matching job{'s' if len(alerts) != 1 else ''}.",
+            "",
+        ]
+        for index, alert in enumerate(alerts, start=1):
+            keywords = ", ".join(alert.matched_keywords) or "Not specified"
+            lines.extend(
+                [
+                    f"{index}. {alert.title}",
+                    f"   Company: {alert.company}",
+                    f"   Location: {alert.location or 'Not specified'}",
+                    f"   Keywords: {keywords}",
+                    f"   Apply: {alert.url}",
+                    "",
+                ]
+            )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_digest_html(alerts: list[JobAlert], title: str) -> str:
+        rows = []
+        for alert in alerts:
+            keywords = ", ".join(alert.matched_keywords) or "Not specified"
+            rows.append(
+                "<tr>"
+                f"<td>{escape(alert.company)}</td>"
+                f"<td>{escape(alert.title)}</td>"
+                f"<td>{escape(alert.location or 'Not specified')}</td>"
+                f"<td>{escape(keywords)}</td>"
+                f'<td><a href="{escape(alert.url)}">Apply</a></td>'
+                "</tr>"
+            )
+
+        return f"""<!doctype html>
+<html>
+  <body style="margin:0;padding:24px;background:#f6f8fb;font-family:Arial,sans-serif;color:#1f2937;">
+    <div style="max-width:960px;margin:0 auto;background:#ffffff;border:1px solid #d9e2ec;border-radius:8px;overflow:hidden;">
+      <div style="padding:20px 24px;background:#102a43;color:#ffffff;">
+        <h1 style="margin:0;font-size:22px;line-height:1.3;">{escape(title)}</h1>
+        <p style="margin:8px 0 0;font-size:14px;">{len(alerts)} matching job{'s' if len(alerts) != 1 else ''} ready to review.</p>
+      </div>
+      <div style="padding:20px 24px;">
+        <table style="width:100%;border-collapse:collapse;font-size:14px;">
+          <thead>
+            <tr>
+              <th style="text-align:left;padding:10px;border-bottom:2px solid #bcccdc;">Company</th>
+              <th style="text-align:left;padding:10px;border-bottom:2px solid #bcccdc;">Title</th>
+              <th style="text-align:left;padding:10px;border-bottom:2px solid #bcccdc;">Location</th>
+              <th style="text-align:left;padding:10px;border-bottom:2px solid #bcccdc;">Keywords</th>
+              <th style="text-align:left;padding:10px;border-bottom:2px solid #bcccdc;">Apply</th>
+            </tr>
+          </thead>
+          <tbody>
+            {''.join(rows)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </body>
+</html>"""
 
 
 class NotificationManager:
@@ -154,5 +247,12 @@ class NotificationManager:
 
         if self.telegram:
             self.telegram.send(alert)
-        if self.email:
-            self.email.send(alert)
+
+    def send_email_digest(self, alerts: list[JobAlert], title: str = "Job Matches") -> bool:
+        if not alerts:
+            logger.info("No jobs to email")
+            return False
+        if not self.email:
+            logger.warning("Email digest skipped. Set ENABLE_EMAIL=true and configure email settings")
+            return False
+        return self.email.send_digest(alerts, title)

@@ -124,3 +124,28 @@ class JobDatabase:
             )
             for row in rows
         ]
+
+    def get_all_seen(self) -> list[SeenJob]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT job_hash, company, job_id, title, location, url,
+                       matched_keywords, found_at
+                FROM seen_jobs
+                ORDER BY found_at DESC, company ASC, title ASC
+                """
+            ).fetchall()
+
+        return [
+            SeenJob(
+                job_hash=row["job_hash"],
+                company=row["company"],
+                job_id=row["job_id"],
+                title=row["title"],
+                location=row["location"] or "",
+                url=row["url"],
+                matched_keywords=row["matched_keywords"] or "",
+                found_at=row["found_at"],
+            )
+            for row in rows
+        ]

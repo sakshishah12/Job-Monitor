@@ -133,6 +133,20 @@ python main.py
 
 Check logs for `[CompanyName] Done — scraped: X, profile matches: Y`.
 
+To send one email containing every matching job already saved in `data/seen_jobs.db`:
+
+```bash
+python main.py --email-all-seen
+```
+
+Normal runs send at most one email digest containing the new jobs found during that run.
+
+To scrape normally and send a final email even for matching jobs that were already seen:
+
+```bash
+python main.py --email-sent yes
+```
+
 ---
 
 ## Quick Start (Local)
