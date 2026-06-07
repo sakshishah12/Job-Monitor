@@ -25,7 +25,9 @@
       "Principal",
       "Director",
       "Manager",
-      "Senior"
+      "Senior",
+      "2+",
+      "3+"
     ]
   },
   "scrape_settings": {
