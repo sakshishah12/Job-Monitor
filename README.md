@@ -48,6 +48,21 @@ Edit `profile_filter` in `config.json`:
 1. **Exclude** — if any exclude term appears in the **title**, the job is rejected (word-boundary match).
 2. **Target roles** — at least one role keyword must appear in the title (falls back to full text).
 3. **Must include** — at least one skill keyword must appear in title + description + location.
+4. **Posting date** — when `posting_date_filter.enabled` is true, only jobs inside the configured posting-date window pass.
+
+Example posting-date filter:
+
+```json
+{
+  "posting_date_filter": {
+    "enabled": true,
+    "posted_within_days": 14,
+    "posted_after": "",
+    "posted_before": "",
+    "require_posted_at": true
+  }
+}
+```
 
 ---
 
@@ -158,6 +173,69 @@ pip install -r requirements.txt
 cp .env.example .env            # configure Telegram/Email
 python main.py
 ```
+
+## Application Tracker from Gmail
+
+The application tracker scans Gmail confirmation emails such as "thank you for applying" and writes a deduplicated spreadsheet-style CSV to `data/applications.csv`.
+
+1. Create a Gmail App Password for `sakshijs1211@gmail.com`.
+2. Add these values to `.env`:
+
+```bash
+APPLICATION_EMAIL_USERNAME=sakshijs1211@gmail.com
+APPLICATION_EMAIL_APP_PASSWORD=your_gmail_app_password
+APPLICATION_IMAP_HOST=imap.gmail.com
+APPLICATION_IMAP_MAILBOX=INBOX
+```
+
+Run:
+
+```bash
+python application_tracker.py --days-back 30 --max-emails 200
+```
+
+The CSV columns include `company`, `role`, `status`, `recruiter_name`, `recruiter_email`, `hiring_manager_name`, and `hiring_manager_email`.
+
+For cleaner extraction, enable the optional LLM layer:
+
+```bash
+APPLICATION_LLM_ENABLED=true
+APPLICATION_LLM_MODEL=gemini-flash-latest
+GEMINI_API_KEY=your_gemini_api_key
+```
+
+Clean rows already saved in `data/applications.csv`:
+
+```bash
+python application_tracker.py --enrich-existing --drop-irrelevant
+```
+
+Use the LLM while scanning new Gmail confirmations:
+
+```bash
+python application_tracker.py --days-back 30 --max-emails 200 --use-llm
+```
+
+Scan or enrich only a specific received-date range:
+
+```powershell
+python application_tracker.py --since-date 2026-06-01 --until-date 2026-06-11 --max-emails 200 --use-llm
+python application_tracker.py --enrich-existing --since-date 2026-06-01 --until-date 2026-06-11 --drop-irrelevant
+```
+
+Register a local Windows daily scan at 9 AM:
+
+```powershell
+.\scripts\register_daily_application_tracker.ps1
+```
+
+Use a different run time:
+
+```powershell
+.\scripts\register_daily_application_tracker.ps1 -At "18:30"
+```
+
+The daily task runs `scripts\run_application_tracker.ps1`, scans the last 2 days of Gmail, and logs to `logs\application_tracker.log`. New status emails for an existing `company + role` update the existing CSV row instead of creating a duplicate.
 
 ### Telegram setup
 1. Create bot via **@BotFather** → copy token

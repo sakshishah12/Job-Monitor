@@ -18,7 +18,8 @@
       "Data Engineer",
       "Research Engineer",
       "Platform Engineer",
-      "Applied Scientist"
+      "Applied Scientist",
+      "Data Scientist"
     ],
     "must_include_keywords": [
       "Python",
@@ -46,6 +47,13 @@
       "United States - Remote",
       "United States Remote"
     ],
+    "posting_date_filter": {
+      "enabled": true,
+      "posted_within_days": 14,
+      "posted_after": "",
+      "posted_before": "",
+      "require_posted_at": true
+    },
     "exclude_keywords": [
       "Senior",
       "Principal",
@@ -56,7 +64,13 @@
       "VP",
       "Android",
       "iOS",
-      "Frontend"
+      "Frontend",
+      "3+",
+      "5+",
+      "8+",
+      "Sr.",
+      "II",
+      "4+"
     ]
   },
   "companies": [

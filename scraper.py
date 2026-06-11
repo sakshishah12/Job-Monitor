@@ -41,6 +41,7 @@ class JobListing:
     location: str
     url: str
     description: str = ""
+    posted_at: str = ""
     matched_keywords: list[str] = field(default_factory=list)
 
 
@@ -109,6 +110,7 @@ class GreenhouseScraper(BaseScraper):
                     location=loc_name,
                     url=item.get("absolute_url", ""),
                     description=_strip_html(content),
+                    posted_at=item.get("first_published") or "",
                 )
             )
 
@@ -144,6 +146,7 @@ class AshbyScraper(BaseScraper):
                     location=(item.get("location") or "").strip(),
                     url=item.get("jobUrl") or item.get("applyUrl", ""),
                     description=item.get("descriptionPlain") or _strip_html(item.get("descriptionHtml", "")),
+                    posted_at=item.get("publishedAt") or "",
                 )
             )
 
@@ -210,6 +213,7 @@ class WorkdayScraper(BaseScraper):
                         location=(post.get("locationsText") or "").strip(),
                         url=url,
                         description=description,
+                        posted_at=_first_present(post, "postedOn", "startDate", "postedDate", "publicationDate"),
                     )
                 )
 
@@ -278,6 +282,7 @@ class AmazonScraper(BaseScraper):
                         location=", ".join(location_parts),
                         url=url,
                         description=item.get("description", "") or item.get("description_short", ""),
+                        posted_at=_first_present(item, "posted_date", "postedDate", "created_at", "updated_at"),
                     )
                 )
 
@@ -331,6 +336,7 @@ class MicrosoftScraper(BaseScraper):
                         location="; ".join(locations) if isinstance(locations, list) else str(locations),
                         url=url,
                         description=pos.get("department", ""),
+                        posted_at=_first_present(pos, "postingDate", "postedDate", "createdDate", "lastModifiedDateTime"),
                     )
                 )
 
@@ -356,6 +362,14 @@ def _strip_html(html: str) -> str:
         return ""
     text = re.sub(r"<[^>]+>", " ", html)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _first_present(data: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = data.get(key)
+        if value:
+            return str(value)
+    return ""
 
 
 def get_scraper(company_config: dict, scrape_settings: dict) -> Optional[BaseScraper]:
