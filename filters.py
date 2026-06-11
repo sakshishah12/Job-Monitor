@@ -12,6 +12,7 @@ from scraper import JobListing
 class ProfileFilter:
     must_include_keywords: list[str] = field(default_factory=list)
     target_roles: list[str] = field(default_factory=list)
+    location_keywords: list[str] = field(default_factory=list)
     exclude_keywords: list[str] = field(default_factory=list)
 
     @classmethod
@@ -20,6 +21,7 @@ class ProfileFilter:
         return cls(
             must_include_keywords=profile.get("must_include_keywords", []),
             target_roles=profile.get("target_roles", []),
+            location_keywords=profile.get("location_keywords", []),
             exclude_keywords=profile.get("exclude_keywords", []),
         )
 
@@ -47,12 +49,15 @@ class ProfileFilter:
         if self.must_include_keywords and not skill_hits:
             return False, []
 
-        return True, role_hits + skill_hits
+        location_hits = [k for k in self.location_keywords if self._matches_term(k, location)]
+        if self.location_keywords and not location_hits:
+            return False, []
+
+        return True, role_hits + skill_hits + location_hits
 
     @staticmethod
     def _matches_term(term: str, text: str) -> bool:
         if not term.strip() or not text.strip():
             return False
-        if len(term) <= 3 and " " not in term:
-            return bool(re.search(rf"\b{re.escape(term)}\b", text, re.IGNORECASE))
-        return term.lower() in text.lower()
+        pattern = rf"\b{re.escape(term.strip())}\b"
+        return bool(re.search(pattern, text, re.IGNORECASE))

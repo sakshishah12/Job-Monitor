@@ -1,162 +1,121 @@
 {
-  "profile_filter": {
-    "must_include_keywords": [
-      "Python",
-      "FastAPI",
-      "Applied AI",
-      "RAG",
-      "FAISS",
-      "Machine Learning",
-      "NLP",
-      "Backend",
-      "Data Engineering"
-    ],
-    "target_roles": [
-      "New Grad",
-      "Early Career",
-      "University",
-      "2026",
-      "Software Engineer",
-      "AI Engineer",
-      "Backend Engineer"
-    ],
-    "exclude_keywords": [
-      "Staff",
-      "Principal",
-      "Director",
-      "Manager",
-      "Senior",
-      "2+",
-      "3+"
-    ]
-  },
   "scrape_settings": {
     "max_pages_per_company": 5,
     "results_per_page": 20,
     "delay_min_seconds": 2,
-    "delay_max_seconds": 6,
+    "delay_max_seconds": 5,
     "request_timeout_seconds": 30,
     "fetch_descriptions": true
   },
+  "profile_filter": {
+    "target_roles": [
+      "Backend Engineer",
+      "Backend Software Engineer",
+      "Software Engineer",
+      "Data Scientist",
+      "Machine Learning Engineer",
+      "AI Engineer",
+      "Data Engineer",
+      "Research Engineer",
+      "Platform Engineer",
+      "Applied Scientist"
+    ],
+    "must_include_keywords": [
+      "Python",
+      "FastAPI",
+      "PostgreSQL",
+      "Docker",
+      "TypeScript",
+      "SQL",
+      "LangChain",
+      "Microservices",
+      "REST API",
+      "AWS"
+    ],
+    "location_keywords": [
+      "United States",
+      "USA",
+      "U.S.",
+      "US",
+      "Remote US",
+      "Remote - US",
+      "Remote, US",
+      "Remote (US)",
+      "Remote in US",
+      "Remote in the United States",
+      "United States - Remote",
+      "United States Remote"
+    ],
+    "exclude_keywords": [
+      "Senior",
+      "Principal",
+      "Lead",
+      "Staff",
+      "Manager",
+      "Director",
+      "VP",
+      "Android",
+      "iOS",
+      "Frontend"
+    ]
+  },
   "companies": [
-    {
-      "name": "Salesforce",
-      "enabled": true,
-      "scraper": "workday",
-      "tenant": "salesforce",
-      "wd_server": "wd12",
-      "site": "External_Career_Site",
-      "careers_url": "https://salesforce.wd12.myworkdayjobs.com/en-US/External_Career_Site"
-    },
-    {
-      "name": "Snowflake",
-      "enabled": true,
-      "scraper": "ashby",
-      "board_slug": "snowflake",
-      "careers_url": "https://careers.snowflake.com/us/en/search-results"
-    },
-    {
-      "name": "Datadog",
-      "enabled": true,
-      "scraper": "greenhouse",
-      "board_slug": "datadog",
-      "careers_url": "https://careers.datadoghq.com/"
-    },
-    {
-      "name": "Stripe",
-      "enabled": true,
-      "scraper": "greenhouse",
-      "board_slug": "stripe",
-      "careers_url": "https://stripe.com/jobs/search"
-    },
-    {
-      "name": "Anthropic",
-      "enabled": true,
-      "scraper": "greenhouse",
-      "board_slug": "anthropic",
-      "careers_url": "https://www.anthropic.com/careers"
-    },
-    {
-      "name": "OpenAI",
-      "enabled": true,
-      "scraper": "ashby",
-      "board_slug": "openai",
-      "careers_url": "https://openai.com/careers/search/"
-    },
-    {
-      "name": "Glean",
-      "enabled": true,
-      "scraper": "greenhouse",
-      "board_slug": "gleanwork",
-      "careers_url": "https://www.glean.com/careers"
-    },
-    {
-      "name": "Databricks",
-      "enabled": true,
-      "scraper": "greenhouse",
-      "board_slug": "databricks",
-      "careers_url": "https://www.databricks.com/company/careers/open-positions"
-    },
-    {
-      "name": "Scale AI",
-      "enabled": true,
-      "scraper": "greenhouse",
-      "board_slug": "scaleai",
-      "careers_url": "https://scale.com/careers"
-    },
-    {
-      "name": "Cohere",
-      "enabled": true,
-      "scraper": "ashby",
-      "board_slug": "cohere",
-      "careers_url": "https://cohere.com/careers"
-    },
-    {
-      "name": "Perplexity",
-      "enabled": true,
-      "scraper": "ashby",
-      "board_slug": "perplexity",
-      "careers_url": "https://www.perplexity.ai/hub/careers"
-    },
-    {
-      "name": "Cursor",
-      "enabled": true,
-      "scraper": "ashby",
-      "board_slug": "cursor",
-      "careers_url": "https://cursor.com/careers"
-    },
-    {
-      "name": "MongoDB",
-      "enabled": true,
-      "scraper": "greenhouse",
-      "board_slug": "mongodb",
-      "careers_url": "https://www.mongodb.com/careers"
-    },
-    {
-      "name": "Cloudflare",
-      "enabled": true,
-      "scraper": "greenhouse",
-      "board_slug": "cloudflare",
-      "careers_url": "https://www.cloudflare.com/careers/jobs/"
-    },
-    {
-      "name": "Microsoft",
-      "enabled": true,
-      "scraper": "microsoft",
-      "careers_url": "https://apply.careers.microsoft.com/careers"
-    },
-    {
-      "name": "Amazon",
-      "enabled": true,
-      "scraper": "amazon",
-      "careers_url": "https://www.amazon.jobs/en/search"
-    },
-    {
-      "name": "Intuit",
-      "enabled": false,
-      "scraper": "phenom",
-      "careers_url": "https://jobs.intuit.com/search-jobs",
-      "_note": "Intuit uses Phenom People with no public JSON API. Requires OAuth token from Phenom. Set enabled:true only after adding a PhenomScraper with credentials."
-    }
+    { "name": "Datadog", "enabled": true, "scraper": "greenhouse", "board_slug": "datadog" },
+    { "name": "Stripe", "enabled": true, "scraper": "greenhouse", "board_slug": "stripe" },
+    { "name": "Anthropic", "enabled": true, "scraper": "greenhouse", "board_slug": "anthropic" },
+    { "name": "Glean", "enabled": true, "scraper": "greenhouse", "board_slug": "gleanwork" },
+    { "name": "Databricks", "enabled": true, "scraper": "greenhouse", "board_slug": "databricks" },
+    { "name": "Scale AI", "enabled": true, "scraper": "greenhouse", "board_slug": "scaleai" },
+    { "name": "MongoDB", "enabled": true, "scraper": "greenhouse", "board_slug": "mongodb" },
+    { "name": "Cloudflare", "enabled": true, "scraper": "greenhouse", "board_slug": "cloudflare" },
+    { "name": "Figma", "enabled": true, "scraper": "greenhouse", "board_slug": "figma" },
+    { "name": "GitLab", "enabled": true, "scraper": "greenhouse", "board_slug": "gitlab" },
+    { "name": "Airbnb", "enabled": true, "scraper": "greenhouse", "board_slug": "airbnb" },
+    { "name": "Reddit", "enabled": true, "scraper": "greenhouse", "board_slug": "reddit" },
+    { "name": "Brex", "enabled": true, "scraper": "greenhouse", "board_slug": "brex" },
+    { "name": "Intercom", "enabled": true, "scraper": "greenhouse", "board_slug": "intercom" },
+    { "name": "Lyft", "enabled": true, "scraper": "greenhouse", "board_slug": "lyft" },
+    { "name": "Robinhood", "enabled": true, "scraper": "greenhouse", "board_slug": "robinhood" },
+    { "name": "Airtable", "enabled": true, "scraper": "greenhouse", "board_slug": "airtable" },
+    { "name": "Asana", "enabled": true, "scraper": "greenhouse", "board_slug": "asana" },
+    { "name": "Mercury", "enabled": true, "scraper": "greenhouse", "board_slug": "mercury" },
+    { "name": "Discord", "enabled": true, "scraper": "greenhouse", "board_slug": "discord" },
+    { "name": "Coinbase", "enabled": true, "scraper": "greenhouse", "board_slug": "coinbase" },
+    { "name": "Vercel", "enabled": true, "scraper": "greenhouse", "board_slug": "vercel" },
+    { "name": "Fivetran", "enabled": true, "scraper": "greenhouse", "board_slug": "fivetran" },
+    { "name": "Twilio", "enabled": true, "scraper": "greenhouse", "board_slug": "twilio" },
+    { "name": "Okta", "enabled": true, "scraper": "greenhouse", "board_slug": "okta" },
+    { "name": "Postman", "enabled": true, "scraper": "greenhouse", "board_slug": "postman" },
+    { "name": "Chime", "enabled": true, "scraper": "greenhouse", "board_slug": "chime" },
+    { "name": "Dropbox", "enabled": true, "scraper": "greenhouse", "board_slug": "dropbox" },
+    { "name": "Duolingo", "enabled": true, "scraper": "greenhouse", "board_slug": "duolingo" },
+    { "name": "Affirm", "enabled": true, "scraper": "greenhouse", "board_slug": "affirm" },
+    { "name": "Samsara", "enabled": true, "scraper": "greenhouse", "board_slug": "samsara" },
+    { "name": "DoorDash", "enabled": true, "scraper": "greenhouse", "board_slug": "doordashusa" },
+    { "name": "Waymo", "enabled": true, "scraper": "greenhouse", "board_slug": "waymo" },
+    { "name": "Instacart", "enabled": true, "scraper": "greenhouse", "board_slug": "instacart" },
+    { "name": "Amplitude", "enabled": true, "scraper": "greenhouse", "board_slug": "amplitude" },
+    { "name": "Pinterest", "enabled": true, "scraper": "greenhouse", "board_slug": "pinterest" },
+    { "name": "Snowflake", "enabled": true, "scraper": "ashby", "board_slug": "snowflake" },
+    { "name": "OpenAI", "enabled": true, "scraper": "ashby", "board_slug": "openai" },
+    { "name": "Cohere", "enabled": true, "scraper": "ashby", "board_slug": "cohere" },
+    { "name": "Perplexity", "enabled": true, "scraper": "ashby", "board_slug": "perplexity" },
+    { "name": "Cursor", "enabled": true, "scraper": "ashby", "board_slug": "cursor" },
+    { "name": "Linear", "enabled": true, "scraper": "ashby", "board_slug": "linear" },
+    { "name": "Replit", "enabled": true, "scraper": "ashby", "board_slug": "replit" },
+    { "name": "Fireworks AI", "enabled": true, "scraper": "ashby", "board_slug": "fireworksai" },
+    { "name": "Harvey", "enabled": true, "scraper": "ashby", "board_slug": "harvey" },
+    { "name": "Sierra", "enabled": true, "scraper": "ashby", "board_slug": "sierra" },
+    { "name": "PostHog", "enabled": true, "scraper": "ashby", "board_slug": "posthog" },
+    { "name": "RunPod", "enabled": true, "scraper": "ashby", "board_slug": "runpod" },
+    { "name": "ElevenLabs", "enabled": true, "scraper": "ashby", "board_slug": "elevenlabs" },
+    { "name": "Pika", "enabled": true, "scraper": "ashby", "board_slug": "pika" },
+    { "name": "Decagon", "enabled": true, "scraper": "ashby", "board_slug": "decagon" },
+    { "name": "Lambda", "enabled": true, "scraper": "ashby", "board_slug": "lambda" },
+    { "name": "Writer", "enabled": true, "scraper": "ashby", "board_slug": "writer" },
+    { "name": "Cognition", "enabled": true, "scraper": "ashby", "board_slug": "cognition" },
+    { "name": "Baseten", "enabled": true, "scraper": "ashby", "board_slug": "baseten" },
+    { "name": "Modal", "enabled": true, "scraper": "ashby", "board_slug": "modal" },
+    { "name": "Crusoe", "enabled": true, "scraper": "ashby", "board_slug": "crusoe" }
   ]
 }
