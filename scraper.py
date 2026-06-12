@@ -244,6 +244,75 @@ class WorkdayScraper(BaseScraper):
             return ""
 
 
+class OracleScraper(BaseScraper):
+    """Oracle Recruiting Cloud Candidate Experience scraper."""
+
+    def scrape(self) -> list[JobListing]:
+        host = self.config["host"].rstrip("/")
+        site_number = self.config["site_number"]
+        locale = self.config.get("locale", "en")
+        url = f"{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+        jobs: list[JobListing] = []
+        offset = 0
+
+        for page in range(self.max_pages):
+            try:
+                self._random_delay()
+                response = self.session.get(
+                    url,
+                    params={
+                        "onlyData": "true",
+                        "expand": "requisitionList.secondaryLocations",
+                        "finder": (
+                            f"findReqs;siteNumber={site_number},"
+                            f"limit={self.page_size},offset={offset},sortBy=POSTING_DATES_DESC"
+                        ),
+                    },
+                    headers=self._headers(),
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                data = response.json()
+            except (requests.RequestException, json.JSONDecodeError) as exc:
+                logger.error("[%s] Oracle page %d failed: %s", self.company_name, page + 1, exc)
+                break
+
+            search_result = (data.get("items") or [{}])[0]
+            raw_jobs = search_result.get("requisitionList", [])
+            if not raw_jobs:
+                break
+
+            for item in raw_jobs:
+                job_id = str(item.get("Id", ""))
+                primary_location = item.get("PrimaryLocation", "") or ""
+                secondary_locations = item.get("secondaryLocations") or []
+                secondary_names = [
+                    loc.get("Name") or loc.get("PrimaryLocation") or ""
+                    for loc in secondary_locations
+                    if isinstance(loc, dict)
+                ]
+                locations = [primary_location, *[name for name in secondary_names if name]]
+                jobs.append(
+                    JobListing(
+                        company=self.company_name,
+                        job_id=job_id,
+                        title=(item.get("Title") or "").strip(),
+                        location="; ".join(dict.fromkeys(locations)),
+                        url=f"{host}/hcmUI/CandidateExperience/{locale}/sites/{site_number}/job/{job_id}",
+                        description=_strip_html(item.get("ShortDescriptionStr", "") or ""),
+                        posted_at=item.get("PostedDate") or "",
+                    )
+                )
+
+            offset += self.page_size
+            total = search_result.get("TotalJobsCount", 0)
+            if offset >= total:
+                break
+
+        logger.info("[%s] Oracle: scraped %d jobs", self.company_name, len(jobs))
+        return jobs
+
+
 class AmazonScraper(BaseScraper):
     API_URL = "https://www.amazon.jobs/en/search.json"
 
@@ -352,6 +421,7 @@ SCRAPER_REGISTRY: dict[str, type[BaseScraper]] = {
     "greenhouse": GreenhouseScraper,
     "ashby": AshbyScraper,
     "workday": WorkdayScraper,
+    "oracle": OracleScraper,
     "amazon": AmazonScraper,
     "microsoft": MicrosoftScraper,
 }

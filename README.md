@@ -26,6 +26,7 @@ scrap-jobs/
 | **Greenhouse** | `greenhouse` | `boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true` | Datadog, Stripe, Anthropic, Glean, Databricks, Scale AI, MongoDB, Cloudflare |
 | **Ashby** | `ashby` | `api.ashbyhq.com/posting-api/job-board/{slug}` | OpenAI, Snowflake, Cohere, Perplexity, Cursor |
 | **Workday** | `workday` | `{tenant}.{wd}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs` | Salesforce |
+| **Oracle Recruiting Cloud** | `oracle` | `{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions` | JPMorgan Chase |
 | **Custom** | `amazon` / `microsoft` | Internal JSON APIs | Amazon, Microsoft |
 
 > **Intuit** is included but disabled — it uses Phenom People with no public JSON API (requires OAuth from Phenom).
@@ -77,6 +78,7 @@ Open the company's careers page → DevTools → **Network** tab → filter by `
 | `boards-api.greenhouse.io` | Greenhouse | `greenhouse` |
 | `api.ashbyhq.com/posting-api` | Ashby | `ashby` |
 | `*.myworkdayjobs.com/wday/cxs` | Workday | `workday` |
+| `*.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions` | Oracle Recruiting Cloud | `oracle` |
 | `api.smartrecruiters.com` | SmartRecruiters | *(not yet supported — open an issue)* |
 | `api.lever.co` | Lever | *(not yet supported)* |
 
@@ -193,6 +195,8 @@ Run:
 ```bash
 python application_tracker.py --days-back 30 --max-emails 200
 ```
+
+This default scan uses regex extraction only. Gemini is used only when `--use-llm` or `--enrich-existing` is passed.
 
 The CSV columns include `company`, `role`, `status`, `recruiter_name`, `recruiter_email`, `hiring_manager_name`, and `hiring_manager_email`.
 

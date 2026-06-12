@@ -130,6 +130,15 @@
     { "name": "Cognition", "enabled": true, "scraper": "ashby", "board_slug": "cognition" },
     { "name": "Baseten", "enabled": true, "scraper": "ashby", "board_slug": "baseten" },
     { "name": "Modal", "enabled": true, "scraper": "ashby", "board_slug": "modal" },
-    { "name": "Crusoe", "enabled": true, "scraper": "ashby", "board_slug": "crusoe" }
+    { "name": "Crusoe", "enabled": true, "scraper": "ashby", "board_slug": "crusoe" },
+    {
+      "name": "JPMorgan Chase",
+      "enabled": true,
+      "scraper": "oracle",
+      "host": "https://jpmc.fa.oraclecloud.com",
+      "site_number": "CX_1001",
+      "locale": "en",
+      "careers_url": "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001"
+    }
   ]
 }

@@ -32,6 +32,9 @@ DEFAULT_MAX_EMAILS = 200
 MAX_FETCH_ATTEMPTS = 3
 DEFAULT_LLM_MODEL = "gemini-flash-latest"
 DATE_ARG_FORMAT = "%Y-%m-%d"
+RETRYABLE_GEMINI_STATUS_CODES = {429, 500, 502, 503, 504}
+GEMINI_REQUEST_DELAY_SECONDS = 2
+DEFAULT_LLM_RETRIES = 1
 
 APPLICATION_SUBJECT_TERMS = [
     "thank you for applying",
@@ -245,18 +248,19 @@ def llm_enabled() -> bool:
     return enabled in {"1", "true", "yes", "on"} and bool(os.getenv("GEMINI_API_KEY"))
 
 
-def extract_with_llm(sender: str, subject: str, body: str) -> dict[str, Any] | None:
+def extract_with_llm(raw_excerpt: str, max_attempts: int = DEFAULT_LLM_RETRIES) -> dict[str, Any] | None:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         return None
 
     model = os.getenv("APPLICATION_LLM_MODEL", DEFAULT_LLM_MODEL)
     prompt = (
-        "Extract job application tracking data from this email.\n\n"
+        "Extract job application tracking data from this raw email excerpt only.\n\n"
         "Rules:\n"
         "- Only set is_application_confirmation to true when the email confirms a submitted job application.\n"
         "- Ignore newsletters, job alerts, generic career advice, marketing email, and LinkedIn content.\n"
         "- If a field is not explicitly present, return an empty string.\n"
+        "- Infer company and role only from the raw_excerpt text. Do not invent missing values.\n"
         "- Use status values like Applied, Rejected, Interview, Assessment, Offer, Withdrawn, or Unknown.\n\n"
         "Return only a valid JSON object with exactly these keys:\n"
         "{\n"
@@ -273,9 +277,7 @@ def extract_with_llm(sender: str, subject: str, body: str) -> dict[str, Any] | N
         "}\n\n"
         + json.dumps(
             {
-                "sender": sender,
-                "subject": subject,
-                "body_excerpt": body[:3000],
+                "raw_excerpt": raw_excerpt[:3000],
             },
             ensure_ascii=True,
         )
@@ -288,8 +290,11 @@ def extract_with_llm(sender: str, subject: str, body: str) -> dict[str, Any] | N
         },
     }
 
-    for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
+    max_attempts = max(1, max_attempts)
+    for attempt in range(1, max_attempts + 1):
         try:
+            if attempt == 1 and GEMINI_REQUEST_DELAY_SECONDS > 0:
+                time.sleep(GEMINI_REQUEST_DELAY_SECONDS)
             response = requests.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
                 headers={
@@ -299,24 +304,40 @@ def extract_with_llm(sender: str, subject: str, body: str) -> dict[str, Any] | N
                 json=payload,
                 timeout=45,
             )
-            if response.status_code == 429 and attempt < MAX_FETCH_ATTEMPTS:
-                retry_after = extract_retry_after_seconds(response.text) or 60
+            if response.status_code in RETRYABLE_GEMINI_STATUS_CODES and attempt < max_attempts:
+                retry_after = extract_retry_after_seconds(response.text) or backoff_seconds(attempt)
                 logger.warning(
-                    "Gemini quota hit for subject %r; waiting %.1f seconds before retry %d/%d",
-                    subject,
+                    "Gemini retryable error %s for subject %r; waiting %.1f seconds before retry %d/%d",
+                    response.status_code,
+                    raw_excerpt[:80],
                     retry_after,
                     attempt + 1,
-                    MAX_FETCH_ATTEMPTS,
+                    max_attempts,
                 )
                 time.sleep(retry_after)
                 continue
             if not response.ok:
-                logger.warning("Gemini API error for subject %r: %s", subject, response.text[:1000])
+                logger.warning("Gemini API error for excerpt %r: %s", raw_excerpt[:80], response.text[:1000])
                 return None
             content = response.json()["candidates"][0]["content"]["parts"][0]["text"]
             return json.loads(content)
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            if attempt < max_attempts:
+                retry_after = backoff_seconds(attempt)
+                logger.warning(
+                    "Gemini network error for excerpt %r: %s; waiting %.1f seconds before retry %d/%d",
+                    raw_excerpt[:80],
+                    exc,
+                    retry_after,
+                    attempt + 1,
+                    max_attempts,
+                )
+                time.sleep(retry_after)
+                continue
+            logger.warning("Gemini extraction failed for excerpt %r: %s", raw_excerpt[:80], exc)
+            return None
         except (requests.RequestException, KeyError, IndexError, json.JSONDecodeError) as exc:
-            logger.warning("Gemini extraction failed for subject %r: %s", subject, exc)
+            logger.warning("Gemini extraction failed for excerpt %r: %s", raw_excerpt[:80], exc)
             return None
     return None
 
@@ -329,6 +350,10 @@ def extract_retry_after_seconds(error_text: str) -> float | None:
         return float(match.group(1)) + 2
     except ValueError:
         return None
+
+
+def backoff_seconds(attempt: int) -> float:
+    return min(120, 15 * (2 ** (attempt - 1)))
 
 
 def apply_llm_fields(entry: ApplicationEntry, extraction: dict[str, Any] | None) -> ApplicationEntry | None:
@@ -405,7 +430,12 @@ def looks_like_application_confirmation(subject: str, body: str) -> bool:
     return any(term in combined for term in APPLICATION_SUBJECT_TERMS)
 
 
-def parse_application(message: Message, source_email: str, use_llm: bool = False) -> ApplicationEntry | None:
+def parse_application(
+    message: Message,
+    source_email: str,
+    use_llm: bool = False,
+    llm_retries: int = DEFAULT_LLM_RETRIES,
+) -> ApplicationEntry | None:
     subject = decode_mime_header(message.get("Subject"))
     sender = decode_mime_header(message.get("From"))
     body = message_text(message)
@@ -435,7 +465,7 @@ def parse_application(message: Message, source_email: str, use_llm: bool = False
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
     if use_llm:
-        entry = apply_llm_fields(entry, extract_with_llm(sender, subject, body))
+        entry = apply_llm_fields(entry, extract_with_llm(body, llm_retries))
         if not entry:
             return None
     entry.application_key = make_application_key(entry.company, entry.role)
@@ -484,10 +514,7 @@ class ApplicationSheet:
             if entry.application_key:
                 rows_by_application_key[entry.application_key] = rows[entry.application_hash]
 
-        with self.path.open("w", newline="", encoding="utf-8") as file:
-            writer = csv.DictWriter(file, fieldnames=self.fieldnames)
-            writer.writeheader()
-            writer.writerows(sorted(rows.values(), key=lambda row: row["received_at"], reverse=True))
+        self.write_rows(list(rows.values()))
         return inserted
 
     def save_rows(self, rows: list[dict[str, str]]) -> None:
@@ -495,10 +522,31 @@ class ApplicationSheet:
         for row in rows:
             normalized_rows.append({field: row.get(field, "") for field in self.fieldnames})
 
-        with self.path.open("w", newline="", encoding="utf-8") as file:
+        self.write_rows(normalized_rows)
+
+    def write_rows(self, rows: list[dict[str, str]]) -> Path:
+        sorted_rows = sorted(rows, key=lambda row: row["received_at"], reverse=True)
+        target_path = self.path
+        fallback_path = self.path.with_name(
+            f"{self.path.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{self.path.suffix}"
+        )
+
+        try:
+            return self._write_rows_to_path(target_path, sorted_rows)
+        except PermissionError:
+            logger.warning(
+                "Could not write %s. It may be open in Excel or another app; writing fallback %s",
+                target_path,
+                fallback_path,
+            )
+            return self._write_rows_to_path(fallback_path, sorted_rows)
+
+    def _write_rows_to_path(self, path: Path, rows: list[dict[str, str]]) -> Path:
+        with path.open("w", newline="", encoding="utf-8") as file:
             writer = csv.DictWriter(file, fieldnames=self.fieldnames)
             writer.writeheader()
-            writer.writerows(sorted(normalized_rows, key=lambda row: row["received_at"], reverse=True))
+            writer.writerows(rows)
+        return path
 
 
 def merge_application_rows(existing: dict[str, str], incoming: dict[str, str]) -> dict[str, str]:
@@ -547,6 +595,7 @@ def fetch_application_confirmations(
     days_back: int,
     max_emails: int,
     use_llm: bool,
+    llm_retries: int = DEFAULT_LLM_RETRIES,
     since_date: str = "",
     until_date: str = "",
 ) -> list[ApplicationEntry]:
@@ -602,7 +651,7 @@ def fetch_application_confirmations(
                 continue
 
             parsed = email.message_from_bytes(raw)
-            entry = parse_application(parsed, username, use_llm=use_llm)
+            entry = parse_application(parsed, username, use_llm=use_llm, llm_retries=llm_retries)
             if entry and within_date_window(entry.received_at, since_date, until_date):
                 entries.append(entry)
     finally:
@@ -614,6 +663,8 @@ def enrich_existing_sheet(
     sheet_path: Path,
     limit: int,
     drop_irrelevant: bool,
+    force: bool = False,
+    llm_retries: int = DEFAULT_LLM_RETRIES,
     since_date: str = "",
     until_date: str = "",
 ) -> tuple[int, int]:
@@ -631,15 +682,15 @@ def enrich_existing_sheet(
             enriched_rows.append(row)
             continue
 
+        if row.get("llm_confidence") and not force:
+            enriched_rows.append(row)
+            continue
+
         if limit > 0 and index >= limit:
             enriched_rows.append(row)
             continue
 
-        extraction = extract_with_llm(
-            sender=row.get("sender", ""),
-            subject=row.get("subject", ""),
-            body=row.get("raw_excerpt", ""),
-        )
+        extraction = extract_with_llm(row.get("raw_excerpt", ""), max_attempts=llm_retries)
         if extraction and extraction.get("is_application_confirmation") is False:
             removed += 1
             if drop_irrelevant:
@@ -685,6 +736,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use-llm", action="store_true", help="Use Gemini to extract cleaner fields while scanning Gmail.")
     parser.add_argument("--enrich-existing", action="store_true", help="Use Gemini to clean rows already saved in the CSV.")
     parser.add_argument("--enrich-limit", type=int, default=0, help="Maximum existing rows to enrich; 0 means all rows.")
+    parser.add_argument("--force-enrich", action="store_true", help="Reprocess rows that already have LLM confidence.")
+    parser.add_argument("--llm-retries", type=int, default=DEFAULT_LLM_RETRIES, help="Gemini attempts per email. Use 1 for quick free-tier runs.")
     parser.add_argument("--drop-irrelevant", action="store_true", help="Remove rows the LLM classifies as non-application emails.")
     return parser.parse_args()
 
@@ -699,17 +752,20 @@ def main() -> None:
             args.sheet_path,
             args.enrich_limit,
             args.drop_irrelevant,
+            args.force_enrich,
+            args.llm_retries,
             args.since_date,
             args.until_date,
         )
         logger.info("LLM-enriched %d existing rows; classified %d as irrelevant", updated, removed)
         return
 
-    use_llm = args.use_llm or llm_enabled()
+    use_llm = args.use_llm
     entries = fetch_application_confirmations(
         args.days_back,
         args.max_emails,
         use_llm,
+        args.llm_retries,
         args.since_date,
         args.until_date,
     )

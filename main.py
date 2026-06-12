@@ -25,8 +25,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("job_monitor")
 
-CONFIG_PATH = Path("config.json")
-DB_PATH = Path("data/seen_jobs.db")
+PROJECT_ROOT = Path(__file__).resolve().parent
+CONFIG_PATH = PROJECT_ROOT / "config.json"
+DB_PATH = PROJECT_ROOT / "data" / "seen_jobs.db"
 
 
 def load_config(path: Path = CONFIG_PATH) -> dict:
@@ -74,7 +75,7 @@ def process_company(
             url=job.url,
         )
 
-        if db.is_seen(job.company, job.job_id):
+        if db.is_seen(job.company, job.job_id, job.url, job.title):
             if include_seen_in_email:
                 email_alerts.append(alert)
             continue
@@ -170,6 +171,7 @@ def run(email_all_seen: bool = False, email_seen: bool = False) -> None:
 
     db = JobDatabase(str(DB_PATH))
     notifier = NotificationManager()
+    logger.info("Using seen-jobs database: %s", DB_PATH)
 
     if email_all_seen:
         logger.info("Sending one email digest for all jobs currently stored in DB")

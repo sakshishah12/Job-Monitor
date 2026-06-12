@@ -57,12 +57,13 @@ class JobDatabase:
             )
 
     @staticmethod
-    def make_hash(company: str, job_id: str) -> str:
-        raw = f"{company.strip().lower()}::{job_id.strip()}"
+    def make_hash(company: str, job_id: str, url: str = "", title: str = "") -> str:
+        identifier = job_id.strip() or url.strip() or title.strip()
+        raw = f"{company.strip().lower()}::{identifier.lower()}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-    def is_seen(self, company: str, job_id: str) -> bool:
-        job_hash = self.make_hash(company, job_id)
+    def is_seen(self, company: str, job_id: str, url: str = "", title: str = "") -> bool:
+        job_hash = self.make_hash(company, job_id, url, title)
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT 1 FROM seen_jobs WHERE job_hash = ?", (job_hash,)
@@ -78,7 +79,7 @@ class JobDatabase:
         url: str,
         matched_keywords: list[str],
     ) -> None:
-        job_hash = self.make_hash(company, job_id)
+        job_hash = self.make_hash(company, job_id, url, title)
         found_at = datetime.now(timezone.utc).isoformat()
         keywords_str = ", ".join(matched_keywords)
 
