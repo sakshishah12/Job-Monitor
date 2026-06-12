@@ -49,7 +49,7 @@
     ],
     "posting_date_filter": {
       "enabled": true,
-      "posted_within_days": 14,
+      "posted_within_days": 3,
       "posted_after": "",
       "posted_before": "",
       "require_posted_at": true

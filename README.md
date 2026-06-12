@@ -196,35 +196,14 @@ Run:
 python application_tracker.py --days-back 30 --max-emails 200
 ```
 
-This default scan uses regex extraction only. Gemini is used only when `--use-llm` or `--enrich-existing` is passed.
+The tracker is regex-only by default and updates rows by company. If the same company later sends a status update, the existing company row is updated instead of creating a duplicate.
 
-The CSV columns include `company`, `role`, `status`, `recruiter_name`, `recruiter_email`, `hiring_manager_name`, and `hiring_manager_email`.
-
-For cleaner extraction, enable the optional LLM layer:
-
-```bash
-APPLICATION_LLM_ENABLED=true
-APPLICATION_LLM_MODEL=gemini-flash-latest
-GEMINI_API_KEY=your_gemini_api_key
-```
-
-Clean rows already saved in `data/applications.csv`:
-
-```bash
-python application_tracker.py --enrich-existing --drop-irrelevant
-```
-
-Use the LLM while scanning new Gmail confirmations:
-
-```bash
-python application_tracker.py --days-back 30 --max-emails 200 --use-llm
-```
+The most important CSV columns are `company`, `status`, `received_at`, `last_email_at`, `subject`, `sender`, and `raw_excerpt`.
 
 Scan or enrich only a specific received-date range:
 
 ```powershell
-python application_tracker.py --since-date 2026-06-01 --until-date 2026-06-11 --max-emails 200 --use-llm
-python application_tracker.py --enrich-existing --since-date 2026-06-01 --until-date 2026-06-11 --drop-irrelevant
+python application_tracker.py --since-date 2026-06-01 --until-date 2026-06-11 --max-emails 200
 ```
 
 Register a local Windows daily scan at 9 AM:

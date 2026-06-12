@@ -42,6 +42,7 @@ def process_company(
     db: JobDatabase,
     notifier: NotificationManager,
     include_seen_in_email: bool = False,
+    mark_seen_only: bool = False,
 ) -> tuple[int, int, int, list[JobAlert]]:
     """Returns (scraped_count, matched_count, new_alert_count, email_alerts)."""
     company_name = company_config["name"]
@@ -88,6 +89,10 @@ def process_company(
             url=job.url,
             matched_keywords=matched_terms,
         )
+
+        if mark_seen_only:
+            new_alert_count += 1
+            continue
 
         notifier.send_alert(alert)
         email_alerts.append(alert)
@@ -145,6 +150,11 @@ def parse_args() -> argparse.Namespace:
         dest="email_seen",
         help="Include already-seen matching jobs in the final email digest for this scrape run.",
     )
+    parser.add_argument(
+        "--mark-seen-only",
+        action="store_true",
+        help="Backfill matching jobs into the seen DB without sending Telegram or email alerts.",
+    )
     return parser.parse_args()
 
 
@@ -158,7 +168,7 @@ def send_all_seen_jobs_email(db: JobDatabase, notifier: NotificationManager) -> 
     notifier.send_email_digest(alerts, title="All Saved Job Matches")
 
 
-def run(email_all_seen: bool = False, email_seen: bool = False) -> None:
+def run(email_all_seen: bool = False, email_seen: bool = False, mark_seen_only: bool = False) -> None:
     load_dotenv()
     config = load_config()
     profile = ProfileFilter.from_config(config)
@@ -177,6 +187,8 @@ def run(email_all_seen: bool = False, email_seen: bool = False) -> None:
         logger.info("Sending one email digest for all jobs currently stored in DB")
         send_all_seen_jobs_email(db, notifier)
         return
+    if mark_seen_only:
+        logger.info("Backfill mode enabled: matching jobs will be marked seen without alerts")
 
     total_scraped = 0
     total_matched = 0
@@ -210,6 +222,7 @@ def run(email_all_seen: bool = False, email_seen: bool = False) -> None:
                 db,
                 notifier,
                 include_seen_in_email=email_seen,
+                mark_seen_only=mark_seen_only,
             )
             total_scraped += scraped
             total_matched += matched
@@ -227,7 +240,8 @@ def run(email_all_seen: bool = False, email_seen: bool = False) -> None:
             logger.error("[%s] Unexpected error: %s", company_name, exc, exc_info=True)
 
     email_title = "All Matching Jobs From This Run" if email_seen else "New Job Matches"
-    notifier.send_email_digest(new_alerts, title=email_title)
+    if not mark_seen_only:
+        notifier.send_email_digest(new_alerts, title=email_title)
 
     logger.info(
         "Run complete — scraped: %d, matched: %d, new alerts: %d, errors: %d, total seen: %d",
@@ -241,4 +255,4 @@ def run(email_all_seen: bool = False, email_seen: bool = False) -> None:
 
 if __name__ == "__main__":
     args = parse_args()
-    run(email_all_seen=args.email_all_seen, email_seen=args.email_seen)
+    run(email_all_seen=args.email_all_seen, email_seen=args.email_seen, mark_seen_only=args.mark_seen_only)

@@ -7,11 +7,9 @@ import csv
 import email
 import hashlib
 import imaplib
-import json
 import logging
 import os
 import re
-import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from email.header import decode_header
@@ -19,9 +17,7 @@ from email.message import Message
 from email.utils import parsedate_to_datetime
 from html import unescape
 from pathlib import Path
-from typing import Any
 
-import requests
 from dotenv import load_dotenv
 
 logger = logging.getLogger("application_tracker")
@@ -30,11 +26,7 @@ DEFAULT_SHEET_PATH = Path("data/applications.csv")
 DEFAULT_DAYS_BACK = 30
 DEFAULT_MAX_EMAILS = 200
 MAX_FETCH_ATTEMPTS = 3
-DEFAULT_LLM_MODEL = "gemini-flash-latest"
 DATE_ARG_FORMAT = "%Y-%m-%d"
-RETRYABLE_GEMINI_STATUS_CODES = {429, 500, 502, 503, 504}
-GEMINI_REQUEST_DELAY_SECONDS = 2
-DEFAULT_LLM_RETRIES = 1
 
 APPLICATION_SUBJECT_TERMS = [
     "thank you for applying",
@@ -43,15 +35,26 @@ APPLICATION_SUBJECT_TERMS = [
     "we received your application",
     "your application",
     "application submitted",
+    "application status",
+    "status update",
+    "update on your application",
+    "received your application",
+    "not moving forward",
+    "not move forward",
+    "unfortunately",
+    "interview",
+    "assessment",
 ]
 
 STATUS_PATTERNS = [
     (re.compile(r"\b(unfortunately|not move forward|not moving forward|unable to proceed|will not be proceeding)\b", re.IGNORECASE), "Rejected"),
+    (re.compile(r"\b(no longer under consideration|not selected|pursue other candidates|other applicants)\b", re.IGNORECASE), "Rejected"),
     (re.compile(r"\b(interview|schedule a call|speak with|meet with)\b", re.IGNORECASE), "Interview"),
     (re.compile(r"\b(assessment|coding challenge|technical challenge|take-home|take home)\b", re.IGNORECASE), "Assessment"),
-    (re.compile(r"\b(offer|congratulations)\b", re.IGNORECASE), "Offer"),
+    (re.compile(r"\b(offer letter|extend an offer|pleased to offer|job offer)\b", re.IGNORECASE), "Offer"),
     (re.compile(r"\bthank(s| you)\b.*\b(applying|application)\b", re.IGNORECASE), "Applied"),
-    (re.compile(r"\bapplication (received|submitted|complete)\b", re.IGNORECASE), "Applied"),
+    (re.compile(r"\b(application|profile) (received|submitted|complete)\b", re.IGNORECASE), "Applied"),
+    (re.compile(r"\breceived your application\b", re.IGNORECASE), "Applied"),
     (re.compile(r"\b(status update|update on your application)\b", re.IGNORECASE), "Updated"),
 ]
 
@@ -79,6 +82,13 @@ ROLE_PATTERNS = [
 ]
 
 COMPANY_PATTERNS = [
+    re.compile(r"thank(?:s| you)?(?:\s+\w+)?\s+for\s+applying\s+to\s+(?P<company>[A-Z][A-Za-z0-9&()., -]{2,80}?)(?:\s*[-–—:]|!|\.|,|\n|$)", re.IGNORECASE),
+    re.compile(r"application\s+received\s+(?:for\s+.+?\s+)?at\s+(?P<company>[A-Z][A-Za-z0-9&()., -]{2,80}?)(?:\.|,|\n|$)", re.IGNORECASE),
+    re.compile(r"received\s+your\s+application\s+for\s+.+?\s+at\s+(?P<company>[A-Z][A-Za-z0-9&()., -]{2,80}?)(?:\.|,|\n|$)", re.IGNORECASE),
+    re.compile(r"application\s+for\s+.+?\s+at\s+(?P<company>[A-Z][A-Za-z0-9&()., -]{2,80}?)(?:\.|,|\n|$)", re.IGNORECASE),
+    re.compile(r"applying\s+to\s+(?P<company>[A-Z][A-Za-z0-9&()., -]{2,80}?)(?:\s*[-–—:]|!|\.|,|\n|$)", re.IGNORECASE),
+    re.compile(r"interest\s+in\s+(?:joining\s+our\s+team\s+at|joining|working\s+at)\s+(?P<company>[A-Z][A-Za-z0-9&()., -]{2,80}?)(?:\.|,|\n|$)", re.IGNORECASE),
+    re.compile(r"position\s+with\s+(?P<company>[A-Z][A-Za-z0-9&()., -]{2,80}?)(?:\.|,|\n|$)", re.IGNORECASE),
     re.compile(r"(?:at|with|to)\s+(?P<company>[A-Z][A-Za-z0-9&()., -]{2,60})(?:\.|,|\n|$)"),
     re.compile(r"company\s*[:\-]\s*(?P<company>[A-Za-z0-9&()., -]{2,60})", re.IGNORECASE),
 ]
@@ -102,43 +112,13 @@ class ApplicationEntry:
     sender: str
     subject: str
     received_at: str
+    last_email_at: str
     recruiter_name: str
     recruiter_email: str
     hiring_manager_name: str
     hiring_manager_email: str
-    llm_confidence: str
-    llm_notes: str
     raw_excerpt: str
     updated_at: str
-
-
-APPLICATION_EXTRACTION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "is_application_confirmation": {"type": "boolean"},
-        "company": {"type": "string"},
-        "role": {"type": "string"},
-        "status": {"type": "string"},
-        "recruiter_name": {"type": "string"},
-        "recruiter_email": {"type": "string"},
-        "hiring_manager_name": {"type": "string"},
-        "hiring_manager_email": {"type": "string"},
-        "confidence": {"type": "number"},
-        "notes": {"type": "string"},
-    },
-    "required": [
-        "is_application_confirmation",
-        "company",
-        "role",
-        "status",
-        "recruiter_name",
-        "recruiter_email",
-        "hiring_manager_name",
-        "hiring_manager_email",
-        "confidence",
-        "notes",
-    ],
-}
 
 
 def decode_mime_header(value: str | None) -> str:
@@ -212,19 +192,15 @@ def infer_role(subject: str, body: str) -> str:
 
 def infer_company(subject: str, body: str, sender: str) -> str:
     combined = f"{subject}\n{body}"
-    for pattern in ROLE_COMPANY_PATTERNS:
+    for pattern in COMPANY_PATTERNS:
         for text in (subject, combined):
             match = pattern.search(text)
             if match:
-                return clean_value(match.group("company"))
-    for pattern in COMPANY_PATTERNS:
-        match = pattern.search(combined)
-        if match:
-            return clean_value(match.group("company"))
+                return clean_company(match.group("company"))
 
     domain_match = re.search(r"@(?:mail\.|jobs\.|careers\.)?(?P<domain>[A-Za-z0-9-]+)\.", sender)
     if domain_match:
-        return domain_match.group("domain").replace("-", " ").title()
+        return clean_company(domain_match.group("domain").replace("-", " ").title())
     return ""
 
 
@@ -243,136 +219,16 @@ def clean_value(value: str) -> str:
     return value.strip(" .,-:")
 
 
-def llm_enabled() -> bool:
-    enabled = os.getenv("APPLICATION_LLM_ENABLED", "false").strip().lower()
-    return enabled in {"1", "true", "yes", "on"} and bool(os.getenv("GEMINI_API_KEY"))
-
-
-def extract_with_llm(raw_excerpt: str, max_attempts: int = DEFAULT_LLM_RETRIES) -> dict[str, Any] | None:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return None
-
-    model = os.getenv("APPLICATION_LLM_MODEL", DEFAULT_LLM_MODEL)
-    prompt = (
-        "Extract job application tracking data from this raw email excerpt only.\n\n"
-        "Rules:\n"
-        "- Only set is_application_confirmation to true when the email confirms a submitted job application.\n"
-        "- Ignore newsletters, job alerts, generic career advice, marketing email, and LinkedIn content.\n"
-        "- If a field is not explicitly present, return an empty string.\n"
-        "- Infer company and role only from the raw_excerpt text. Do not invent missing values.\n"
-        "- Use status values like Applied, Rejected, Interview, Assessment, Offer, Withdrawn, or Unknown.\n\n"
-        "Return only a valid JSON object with exactly these keys:\n"
-        "{\n"
-        '  "is_application_confirmation": true,\n'
-        '  "company": "",\n'
-        '  "role": "",\n'
-        '  "status": "",\n'
-        '  "recruiter_name": "",\n'
-        '  "recruiter_email": "",\n'
-        '  "hiring_manager_name": "",\n'
-        '  "hiring_manager_email": "",\n'
-        '  "confidence": 0.0,\n'
-        '  "notes": ""\n'
-        "}\n\n"
-        + json.dumps(
-            {
-                "raw_excerpt": raw_excerpt[:3000],
-            },
-            ensure_ascii=True,
-        )
-    )
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0,
-            "responseMimeType": "application/json",
-        },
-    }
-
-    max_attempts = max(1, max_attempts)
-    for attempt in range(1, max_attempts + 1):
-        try:
-            if attempt == 1 and GEMINI_REQUEST_DELAY_SECONDS > 0:
-                time.sleep(GEMINI_REQUEST_DELAY_SECONDS)
-            response = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                headers={
-                    "x-goog-api-key": api_key,
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=45,
-            )
-            if response.status_code in RETRYABLE_GEMINI_STATUS_CODES and attempt < max_attempts:
-                retry_after = extract_retry_after_seconds(response.text) or backoff_seconds(attempt)
-                logger.warning(
-                    "Gemini retryable error %s for subject %r; waiting %.1f seconds before retry %d/%d",
-                    response.status_code,
-                    raw_excerpt[:80],
-                    retry_after,
-                    attempt + 1,
-                    max_attempts,
-                )
-                time.sleep(retry_after)
-                continue
-            if not response.ok:
-                logger.warning("Gemini API error for excerpt %r: %s", raw_excerpt[:80], response.text[:1000])
-                return None
-            content = response.json()["candidates"][0]["content"]["parts"][0]["text"]
-            return json.loads(content)
-        except (requests.Timeout, requests.ConnectionError) as exc:
-            if attempt < max_attempts:
-                retry_after = backoff_seconds(attempt)
-                logger.warning(
-                    "Gemini network error for excerpt %r: %s; waiting %.1f seconds before retry %d/%d",
-                    raw_excerpt[:80],
-                    exc,
-                    retry_after,
-                    attempt + 1,
-                    max_attempts,
-                )
-                time.sleep(retry_after)
-                continue
-            logger.warning("Gemini extraction failed for excerpt %r: %s", raw_excerpt[:80], exc)
-            return None
-        except (requests.RequestException, KeyError, IndexError, json.JSONDecodeError) as exc:
-            logger.warning("Gemini extraction failed for excerpt %r: %s", raw_excerpt[:80], exc)
-            return None
-    return None
-
-
-def extract_retry_after_seconds(error_text: str) -> float | None:
-    match = re.search(r"retry in ([0-9.]+)s", error_text, re.IGNORECASE)
-    if not match:
-        return None
-    try:
-        return float(match.group(1)) + 2
-    except ValueError:
-        return None
-
-
-def backoff_seconds(attempt: int) -> float:
-    return min(120, 15 * (2 ** (attempt - 1)))
-
-
-def apply_llm_fields(entry: ApplicationEntry, extraction: dict[str, Any] | None) -> ApplicationEntry | None:
-    if not extraction:
-        return entry
-    if extraction.get("is_application_confirmation") is False:
-        return None
-
-    entry.company = clean_value(str(extraction.get("company") or entry.company))
-    entry.role = clean_value(str(extraction.get("role") or entry.role))
-    entry.status = clean_value(str(extraction.get("status") or entry.status or "Applied"))
-    entry.recruiter_name = clean_value(str(extraction.get("recruiter_name") or entry.recruiter_name))
-    entry.recruiter_email = clean_value(str(extraction.get("recruiter_email") or entry.recruiter_email))
-    entry.hiring_manager_name = clean_value(str(extraction.get("hiring_manager_name") or entry.hiring_manager_name))
-    entry.hiring_manager_email = clean_value(str(extraction.get("hiring_manager_email") or entry.hiring_manager_email))
-    entry.llm_confidence = str(extraction.get("confidence", ""))
-    entry.llm_notes = clean_value(str(extraction.get("notes") or ""))
-    entry.updated_at = datetime.now(timezone.utc).isoformat()
-    return entry
+def clean_company(value: str) -> str:
+    value = clean_value(value)
+    value = re.split(
+        r"\s+-\s+|\s+–\s+|\s+—\s+|\s+for\s+|\s+role\b|\s+position\b|\s+job\b",
+        value,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    value = re.sub(r"\b(careers|jobs|talent|recruiting|workday|greenhouse|ashbyhq)\b$", "", value, flags=re.IGNORECASE)
+    return value.strip(" .,-:")
 
 
 def make_hash(message_id: str, sender: str, subject: str, received_at: str) -> str:
@@ -382,10 +238,9 @@ def make_hash(message_id: str, sender: str, subject: str, received_at: str) -> s
 
 def make_application_key(company: str, role: str) -> str:
     company_key = re.sub(r"[^a-z0-9]+", " ", company.lower()).strip()
-    role_key = re.sub(r"[^a-z0-9]+", " ", role.lower()).strip()
-    if not company_key or not role_key:
+    if not company_key:
         return ""
-    return hashlib.sha256(f"{company_key}::{role_key}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(company_key.encode("utf-8")).hexdigest()
 
 
 def parse_received_at(message: Message) -> str:
@@ -433,8 +288,6 @@ def looks_like_application_confirmation(subject: str, body: str) -> bool:
 def parse_application(
     message: Message,
     source_email: str,
-    use_llm: bool = False,
-    llm_retries: int = DEFAULT_LLM_RETRIES,
 ) -> ApplicationEntry | None:
     subject = decode_mime_header(message.get("Subject"))
     sender = decode_mime_header(message.get("From"))
@@ -455,19 +308,14 @@ def parse_application(
         sender=sender,
         subject=subject,
         received_at=received_at,
+        last_email_at=received_at,
         recruiter_name=recruiter_name,
         recruiter_email=recruiter_email,
         hiring_manager_name="",
         hiring_manager_email="",
-        llm_confidence="",
-        llm_notes="",
         raw_excerpt=body[:500],
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
-    if use_llm:
-        entry = apply_llm_fields(entry, extract_with_llm(body, llm_retries))
-        if not entry:
-            return None
     entry.application_key = make_application_key(entry.company, entry.role)
     return entry
 
@@ -525,7 +373,8 @@ class ApplicationSheet:
         self.write_rows(normalized_rows)
 
     def write_rows(self, rows: list[dict[str, str]]) -> Path:
-        sorted_rows = sorted(rows, key=lambda row: row["received_at"], reverse=True)
+        normalized_rows = [{field: row.get(field, "") for field in self.fieldnames} for row in rows]
+        sorted_rows = sorted(normalized_rows, key=lambda row: row["received_at"], reverse=True)
         target_path = self.path
         fallback_path = self.path.with_name(
             f"{self.path.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{self.path.suffix}"
@@ -554,8 +403,12 @@ def merge_application_rows(existing: dict[str, str], incoming: dict[str, str]) -
     for field, value in incoming.items():
         if field in {"application_hash", "application_key", "source_email", "received_at"}:
             continue
-        if value:
+        if value and field != "role":
             merged[field] = value
+        if field == "role" and value and not merged.get("role"):
+            merged[field] = value
+    if incoming.get("received_at"):
+        merged["last_email_at"] = incoming["received_at"]
     merged["updated_at"] = datetime.now(timezone.utc).isoformat()
     return merged
 
@@ -594,8 +447,6 @@ def fetch_raw_message(
 def fetch_application_confirmations(
     days_back: int,
     max_emails: int,
-    use_llm: bool,
-    llm_retries: int = DEFAULT_LLM_RETRIES,
     since_date: str = "",
     until_date: str = "",
 ) -> list[ApplicationEntry]:
@@ -651,79 +502,12 @@ def fetch_application_confirmations(
                 continue
 
             parsed = email.message_from_bytes(raw)
-            entry = parse_application(parsed, username, use_llm=use_llm, llm_retries=llm_retries)
+            entry = parse_application(parsed, username)
             if entry and within_date_window(entry.received_at, since_date, until_date):
                 entries.append(entry)
     finally:
         close_imap(client)
     return entries
-
-
-def enrich_existing_sheet(
-    sheet_path: Path,
-    limit: int,
-    drop_irrelevant: bool,
-    force: bool = False,
-    llm_retries: int = DEFAULT_LLM_RETRIES,
-    since_date: str = "",
-    until_date: str = "",
-) -> tuple[int, int]:
-    if not llm_enabled():
-        raise RuntimeError("Set GEMINI_API_KEY and APPLICATION_LLM_ENABLED=true before using --enrich-existing.")
-
-    sheet = ApplicationSheet(sheet_path)
-    rows = list(sheet.load().values())
-    updated = 0
-    removed = 0
-    enriched_rows: list[dict[str, str]] = []
-
-    for index, row in enumerate(rows):
-        if not within_date_window(row.get("received_at", ""), since_date, until_date):
-            enriched_rows.append(row)
-            continue
-
-        if row.get("llm_confidence") and not force:
-            enriched_rows.append(row)
-            continue
-
-        if limit > 0 and index >= limit:
-            enriched_rows.append(row)
-            continue
-
-        extraction = extract_with_llm(row.get("raw_excerpt", ""), max_attempts=llm_retries)
-        if extraction and extraction.get("is_application_confirmation") is False:
-            removed += 1
-            if drop_irrelevant:
-                continue
-            row["status"] = "Irrelevant"
-            row["llm_confidence"] = str(extraction.get("confidence", ""))
-            row["llm_notes"] = clean_value(str(extraction.get("notes") or ""))
-            row["updated_at"] = datetime.now(timezone.utc).isoformat()
-            enriched_rows.append(row)
-            updated += 1
-            continue
-
-        if extraction:
-            for field in (
-                "company",
-                "role",
-                "status",
-                "recruiter_name",
-                "recruiter_email",
-                "hiring_manager_name",
-                "hiring_manager_email",
-            ):
-                value = clean_value(str(extraction.get(field) or ""))
-                if value:
-                    row[field] = value
-            row["llm_confidence"] = str(extraction.get("confidence", ""))
-            row["llm_notes"] = clean_value(str(extraction.get("notes") or ""))
-            row["updated_at"] = datetime.now(timezone.utc).isoformat()
-            updated += 1
-        enriched_rows.append(row)
-
-    sheet.save_rows(enriched_rows)
-    return updated, removed
 
 
 def parse_args() -> argparse.Namespace:
@@ -733,12 +517,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--until-date", default="", help="Only process emails received on or before YYYY-MM-DD.")
     parser.add_argument("--max-emails", type=int, default=DEFAULT_MAX_EMAILS)
     parser.add_argument("--sheet-path", type=Path, default=DEFAULT_SHEET_PATH)
-    parser.add_argument("--use-llm", action="store_true", help="Use Gemini to extract cleaner fields while scanning Gmail.")
-    parser.add_argument("--enrich-existing", action="store_true", help="Use Gemini to clean rows already saved in the CSV.")
-    parser.add_argument("--enrich-limit", type=int, default=0, help="Maximum existing rows to enrich; 0 means all rows.")
-    parser.add_argument("--force-enrich", action="store_true", help="Reprocess rows that already have LLM confidence.")
-    parser.add_argument("--llm-retries", type=int, default=DEFAULT_LLM_RETRIES, help="Gemini attempts per email. Use 1 for quick free-tier runs.")
-    parser.add_argument("--drop-irrelevant", action="store_true", help="Remove rows the LLM classifies as non-application emails.")
     return parser.parse_args()
 
 
@@ -746,26 +524,9 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     load_dotenv()
     args = parse_args()
-
-    if args.enrich_existing:
-        updated, removed = enrich_existing_sheet(
-            args.sheet_path,
-            args.enrich_limit,
-            args.drop_irrelevant,
-            args.force_enrich,
-            args.llm_retries,
-            args.since_date,
-            args.until_date,
-        )
-        logger.info("LLM-enriched %d existing rows; classified %d as irrelevant", updated, removed)
-        return
-
-    use_llm = args.use_llm
     entries = fetch_application_confirmations(
         args.days_back,
         args.max_emails,
-        use_llm,
-        args.llm_retries,
         args.since_date,
         args.until_date,
     )

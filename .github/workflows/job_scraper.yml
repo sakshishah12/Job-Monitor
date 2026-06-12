@@ -5,9 +5,22 @@ on:
     # Every 6 hours (UTC)
     - cron: "0 */6 * * *"
   workflow_dispatch:
+    inputs:
+      mark_seen_only:
+        description: "Backfill matching jobs into the seen DB without sending alerts"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 permissions:
   contents: read
+
+concurrency:
+  group: job-scraper-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   scrape:
@@ -37,6 +50,17 @@ jobs:
             seen-jobs-db-${{ github.repository }}
             seen-jobs-db-
 
+      - name: Show restored database status
+        run: |
+          if [ -f data/seen_jobs.db ]; then
+            python - <<'PY'
+            from database import JobDatabase
+            print(f"Restored seen jobs: {JobDatabase('data/seen_jobs.db').count_seen()}")
+            PY
+          else
+            echo "No seen-jobs database restored; this run will create one."
+          fi
+
       - name: Run job scraper
         env:
           ENABLE_TELEGRAM: ${{ secrets.ENABLE_TELEGRAM }}
@@ -48,7 +72,24 @@ jobs:
           EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
-        run: python main.py
+        run: |
+          if [ "${{ github.event.inputs.mark_seen_only }}" = "true" ]; then
+            python main.py --mark-seen-only
+          else
+            python main.py
+          fi
+
+      - name: Show updated database status
+        if: always()
+        run: |
+          if [ -f data/seen_jobs.db ]; then
+            python - <<'PY'
+            from database import JobDatabase
+            print(f"Updated seen jobs: {JobDatabase('data/seen_jobs.db').count_seen()}")
+            PY
+          else
+            echo "No seen-jobs database was created."
+          fi
 
       - name: Upload database artifact (backup)
         if: always()
