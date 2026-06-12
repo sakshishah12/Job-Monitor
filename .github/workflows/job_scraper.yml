@@ -53,7 +53,7 @@ jobs:
       - name: Show restored database status
         run: |
           if [ -f data/seen_jobs.db ]; then
-            python -c "from database import JobDatabase; print(f'Restored seen jobs: {JobDatabase(\"data/seen_jobs.db\").count_seen()}')"
+            python -c "from database import JobDatabase; print('Restored seen jobs:', JobDatabase('data/seen_jobs.db').count_seen())"
           else
             echo "No seen-jobs database restored; this run will create one."
           fi
@@ -80,7 +80,7 @@ jobs:
         if: always()
         run: |
           if [ -f data/seen_jobs.db ]; then
-            python -c "from database import JobDatabase; print(f'Updated seen jobs: {JobDatabase(\"data/seen_jobs.db\").count_seen()}')"
+            python -c "from database import JobDatabase; print('Updated seen jobs:', JobDatabase('data/seen_jobs.db').count_seen())"
           else
             echo "No seen-jobs database was created."
           fi
