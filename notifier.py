@@ -102,8 +102,37 @@ class EmailNotifier:
 
     def send_digest(self, alerts: list[JobAlert], title: str = "Job Matches") -> bool:
         if not alerts:
-            logger.info("No jobs to include in email digest")
-            return False
+            logger.info("No jobs to include in email digest, sending empty notification")
+            subject = "[Job Alert] No New Job Postings"
+            plain_body = "There are no new job postings in this time frame."
+            html_body = f"""<!doctype html>
+<html>
+  <body style="margin:0;padding:24px;background:#f6f8fb;font-family:Arial,sans-serif;color:#1f2937;">
+    <div style="max-width:960px;margin:0 auto;background:#ffffff;border:1px solid #d9e2ec;border-radius:8px;overflow:hidden;">
+      <div style="padding:20px 24px;background:#102a43;color:#ffffff;">
+        <h1 style="margin:0;font-size:22px;line-height:1.3;">No New Job Postings</h1>
+        <p style="margin:8px 0 0;font-size:14px;">There are no new job postings in this time frame.</p>
+      </div>
+    </div>
+  </body>
+</html>"""
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = self.sender
+            msg["To"] = self.recipient
+            msg.attach(MIMEText(plain_body, "plain"))
+            msg.attach(MIMEText(html_body, "html"))
+
+            try:
+                with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=30) as server:
+                    server.starttls()
+                    server.login(self.sender, self.password)
+                    server.sendmail(self.sender, [self.recipient], msg.as_string())
+                logger.info("Empty email digest sent")
+                return True
+            except smtplib.SMTPException as exc:
+                logger.error("Empty email digest failed: %s", exc)
+                return False
 
         subject = f"[Job Alert] {title} ({len(alerts)} jobs)"
         plain_body = self._format_digest_plain(alerts, title)
